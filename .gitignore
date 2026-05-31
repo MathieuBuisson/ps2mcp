@@ -1,0 +1,137 @@
+# =========================
+# OS / Editor Artifacts
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# =========================
+# Logs and temp files
+# =========================
+*.log
+*.out
+*.err
+temp/
+tmp/
+
+# =========================
+# .NET build outputs
+# =========================
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+arm64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# .NET project state
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+project.lock.json
+project.fragment.lock.json
+artifacts/
+publish/
+PublishProfiles/
+*.pubxml
+*.pubxml.user
+*.publishsettings
+*.binlog
+
+# .NET test / coverage outputs
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+coverage.*.xml
+coverage.*.json
+coverage.cobertura.xml
+*.coverage
+*.coveragexml
+.coverage
+.coverage.*
+nyc_output/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+
+# Native AOT / single-file publish leftovers
+*.pdb
+*.dll.config
+*.exe.config
+*.r2r.dll
+*.ni.dll
+
+# =========================
+# Node.js (generated TS server fixtures & runtime tests)
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp.*
+*.tsbuildinfo
+dist-ts/
+
+# =========================
+# Python (generated Python server fixtures & runtime tests)
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+dist-py/
+build/
+
+# =========================
+# Bash
+# =========================
+*.pid
+
+# =========================
+# GitHub Actions
+# =========================
+.github/actions/**/dist/
+
+# =========================
+# Reports / Tools
+# =========================
+coverage/
+reports/
+
+# =========================
+# Project-specific
+# =========================
+ai-generated/
+*.local.ps1
