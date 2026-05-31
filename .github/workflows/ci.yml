@@ -8,10 +8,15 @@ permissions:
   contents: read
 
 jobs:
-  baseline:
+  build:
     runs-on: windows-latest
 
     steps:
+      - name: Configure Git line endings
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - name: Checkout
         uses: actions/checkout@v6
 
