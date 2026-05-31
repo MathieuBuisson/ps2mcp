@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Ps2Mcp.Introspection.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Ps2Mcp.Introspection\Ps2Mcp.Introspection.csproj" />
+  </ItemGroup>
+
+</Project>

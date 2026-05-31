@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Ps2Mcp.Emitters.Python.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Ps2Mcp.Emitters.Python\Ps2Mcp.Emitters.Python.csproj" />
+  </ItemGroup>
+
+</Project>

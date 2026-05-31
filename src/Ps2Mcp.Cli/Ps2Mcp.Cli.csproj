@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Ps2Mcp.Cli</RootNamespace>
+    <AssemblyName>ps2mcp</AssemblyName>
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ps2Mcp.Core\Ps2Mcp.Core.csproj" />
+    <ProjectReference Include="..\Ps2Mcp.Introspection\Ps2Mcp.Introspection.csproj" />
+    <ProjectReference Include="..\Ps2Mcp.Emitters.TypeScript\Ps2Mcp.Emitters.TypeScript.csproj" />
+    <ProjectReference Include="..\Ps2Mcp.Emitters.Python\Ps2Mcp.Emitters.Python.csproj" />
+  </ItemGroup>
+
+</Project>

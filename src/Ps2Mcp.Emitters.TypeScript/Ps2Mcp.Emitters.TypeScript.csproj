@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Ps2Mcp.Emitters.TypeScript</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ps2Mcp.Core\Ps2Mcp.Core.csproj" />
+  </ItemGroup>
+
+</Project>

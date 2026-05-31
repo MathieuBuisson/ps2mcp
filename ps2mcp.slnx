@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ps2Mcp.Cli/Ps2Mcp.Cli.csproj" />
+    <Project Path="src/Ps2Mcp.Core/Ps2Mcp.Core.csproj" />
+    <Project Path="src/Ps2Mcp.Introspection/Ps2Mcp.Introspection.csproj" />
+    <Project Path="src/Ps2Mcp.Emitters.TypeScript/Ps2Mcp.Emitters.TypeScript.csproj" />
+    <Project Path="src/Ps2Mcp.Emitters.Python/Ps2Mcp.Emitters.Python.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ps2Mcp.Cli.Tests/Ps2Mcp.Cli.Tests.csproj" />
+    <Project Path="tests/Ps2Mcp.Core.Tests/Ps2Mcp.Core.Tests.csproj" />
+    <Project Path="tests/Ps2Mcp.Introspection.Tests/Ps2Mcp.Introspection.Tests.csproj" />
+    <Project Path="tests/Ps2Mcp.Emitters.TypeScript.Tests/Ps2Mcp.Emitters.TypeScript.Tests.csproj" />
+    <Project Path="tests/Ps2Mcp.Emitters.Python.Tests/Ps2Mcp.Emitters.Python.Tests.csproj" />
+  </Folder>
+</Solution>
