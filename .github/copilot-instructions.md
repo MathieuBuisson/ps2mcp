@@ -12,6 +12,7 @@
 
 - **AOT-safe only.** No in-process hosting of the PowerShell engine, no reflection-emit, no dynamic code generation, no `BinaryFormatter`. Use `System.Management.Automation.Language` AST parsing for script modules and out-of-process `pwsh` for binary modules.
 - **`pwsh` 7.x is the only PowerShell baseline.** Never branch into Windows PowerShell 5.1 as a primary path; legacy modules are bridged via `Import-Module -UseWindowsPowerShell`.
+- **CLI aliases are part of the contract.** `--help` / `-h`, `--version` / `-v`, `--target` / `-t`, and `--out` / `-o` are supported; target values remain lowercase `typescript` or `python`.
 - **IR is language-agnostic.** Analysis layers must not contain TypeScript- or Python-specific branches. Target specifics live only in `Ps2Mcp.Emitters.*`.
 - **Generated TypeScript is `.ts` source only.** The compiler must never emit pre-compiled JavaScript. The generated Python target uses `pyproject.toml` only — no `requirements.txt`.
 - **Bundle the source module.** Generated runtimes load PowerShell via a path relative to their own file, never from a globally installed module.

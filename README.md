@@ -30,19 +30,42 @@ Wrapping a PowerShell module as an MCP server by hand means manually mapping eve
 - Generated runtime hosts: any OS with `pwsh` 7.x installed.
 - `pwsh` 7.x is required on both the host running `ps2mcp` and the host running the generated server.
 
-## Install
+## Build From Source
 
 Release artifacts will be published per OS as standalone binaries (no .NET runtime required). Until v1 ships, build from source:
+
+- Install the .NET 10 SDK selected by [global.json](global.json).
+- Install `pwsh` 7.x.
+- On Windows, install the Native AOT toolchain via Visual Studio Build Tools or Visual Studio with **Desktop development with C++**.
+
+Validate the local development baseline:
 
 ```bash
 git clone https://github.com/your-org/ps2mcp.git
 cd ps2mcp
+dotnet restore ./ps2mcp.slnx
+dotnet format --verify-no-changes ./ps2mcp.slnx --no-restore
+dotnet test ./ps2mcp.slnx --no-restore
 dotnet publish src/Ps2Mcp.Cli -c Release -r <rid> --self-contained
 ```
 
 Replace `<rid>` with `win-x64`, `linux-x64`, `osx-arm64`, etc.
 
 ## Usage
+
+Long and short option forms are equivalent: `--help` / `-h`, `--version` / `-v`, `--target` / `-t`, and `--out` / `-o`.
+
+Show CLI help:
+
+```bash
+ps2mcp --help
+```
+
+Show the compiler version:
+
+```bash
+ps2mcp -v
+```
 
 Generate a TypeScript MCP server:
 

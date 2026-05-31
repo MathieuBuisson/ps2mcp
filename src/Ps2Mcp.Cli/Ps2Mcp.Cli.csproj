@@ -11,6 +11,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Ps2Mcp.Cli.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Ps2Mcp.Core\Ps2Mcp.Core.csproj" />
     <ProjectReference Include="..\Ps2Mcp.Introspection\Ps2Mcp.Introspection.csproj" />
     <ProjectReference Include="..\Ps2Mcp.Emitters.TypeScript\Ps2Mcp.Emitters.TypeScript.csproj" />
