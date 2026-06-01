@@ -13,14 +13,14 @@ internal static class Program
         {
             standardError.WriteLine(errorMessage);
             standardError.WriteLine(CliArgumentsParser.UsageText);
-            return 1;
+            return ExitCodeDispatcher.Dispatch(CliOutcome.Fatal);
         }
 
         return parseResult.Kind switch
         {
             CliParseResultKind.Help => WriteSuccess(standardOutput, CliArgumentsParser.UsageText),
             CliParseResultKind.Version => WriteSuccess(standardOutput, CliVersionProvider.DisplayVersion),
-            CliParseResultKind.Invocation when parseResult.Invocation is not null => 0,
+            CliParseResultKind.Invocation when parseResult.Invocation is not null => ExitCodeDispatcher.Dispatch(CliOutcome.Success),
             _ => throw new InvalidOperationException("CLI parse result is invalid."),
         };
     }
@@ -28,6 +28,6 @@ internal static class Program
     private static int WriteSuccess(TextWriter writer, string value)
     {
         writer.WriteLine(value);
-        return 0;
+        return ExitCodeDispatcher.Dispatch(CliOutcome.Success);
     }
 }
