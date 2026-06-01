@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace Ps2Mcp.Cli.Tests;
 
-internal sealed class FakePwshRunner : IPwshRunner
+internal sealed class FakePwshRunner : IPwshRunner, IDisposable
 {
     private Func<PwshInvocation, PwshInvocationResult>? onInvoke;
 
@@ -19,5 +19,9 @@ internal sealed class FakePwshRunner : IPwshRunner
     {
         Invocations.Add(invocation);
         return OnInvoke(invocation);
+    }
+
+    public void Dispose()
+    {
     }
 }

@@ -5,9 +5,9 @@ namespace Ps2Mcp.Cli;
 
 internal static class Program
 {
-    private static int Main(string[] args) => Run(args, Console.Out, Console.Error);
+    private static int Main(string[] args) => Run(args, Console.Out, Console.Error, new PwshRunner());
 
-    internal static int Run(string[] args, TextWriter standardOutput, TextWriter standardError)
+    internal static int Run(string[] args, TextWriter standardOutput, TextWriter standardError, IPwshRunner pwshRunner)
     {
         if (!CliArgumentsParser.TryParse(args, out var parseResult, out var errorMessage))
         {
@@ -20,9 +20,21 @@ internal static class Program
         {
             CliParseResultKind.Help => WriteSuccess(standardOutput, CliArgumentsParser.UsageText),
             CliParseResultKind.Version => WriteSuccess(standardOutput, CliVersionProvider.DisplayVersion),
-            CliParseResultKind.Invocation when parseResult.Invocation is not null => ExitCodeDispatcher.Dispatch(CliOutcome.Success),
+            CliParseResultKind.Invocation when parseResult.Invocation is not null => RunPreflight(pwshRunner, standardError),
             _ => throw new InvalidOperationException("CLI parse result is invalid."),
         };
+    }
+
+    private static int RunPreflight(IPwshRunner pwshRunner, TextWriter standardError)
+    {
+        var probeResult = PwshProbe.Probe(pwshRunner);
+        if (probeResult.Status != PwshProbeStatus.Ok)
+        {
+            standardError.WriteLine(probeResult.DiagnosticMessage);
+            return ExitCodeDispatcher.Dispatch(CliOutcome.Fatal);
+        }
+
+        return ExitCodeDispatcher.Dispatch(CliOutcome.Success);
     }
 
     private static int WriteSuccess(TextWriter writer, string value)
