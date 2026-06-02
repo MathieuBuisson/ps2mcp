@@ -145,6 +145,59 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void Discover_Psd1InputWithBackslashInArrayNestedModule_NormalizesToForwardSlash()
+    {
+        // Windows-authored manifests commonly use '\' in NestedModules/FileList paths; normalize to match the '/' form of enumerated files.
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; NestedModules = @('Sub1.psm1', 'private\\Helper.psm1') }");
+        WriteFile("MyModule.psm1", "# main");
+        WriteFile("Sub1.psm1", "# sub1");
+        var subDir = Path.Combine(_tempDir, "private");
+        Directory.CreateDirectory(subDir);
+        File.WriteAllText(Path.Combine(subDir, "Helper.psm1"), "# helper");
+        var manifest = Path.Combine(_tempDir, "MyModule.psd1");
+        var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "Sub1.psm1", "private/Helper.psm1" }, info.ManifestReferences.NestedModules);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithDotSlashPrefixInArrayFileList_StripsPrefix()
+    {
+        // PowerShell authors sometimes prefix relative paths with './' or '.\' in manifest values; strip the prefix and normalize separators.
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; FileList = @('./README.md', '.\\LICENSE') }");
+        WriteFile("MyModule.psm1", "# main");
+        WriteFile("README.md", "# readme");
+        WriteFile("LICENSE", "MIT");
+        var manifest = Path.Combine(_tempDir, "MyModule.psd1");
+        var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "README.md", "LICENSE" }, info.ManifestReferences.FileList);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithBackslashInScalarNestedModule_NormalizesToForwardSlash()
+    {
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; NestedModules = 'private\\Helper.psm1' }");
+        WriteFile("MyModule.psm1", "# main");
+        var subDir = Path.Combine(_tempDir, "private");
+        Directory.CreateDirectory(subDir);
+        File.WriteAllText(Path.Combine(subDir, "Helper.psm1"), "# helper");
+        var manifest = Path.Combine(_tempDir, "MyModule.psd1");
+        var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "private/Helper.psm1" }, info.ManifestReferences.NestedModules);
+    }
+
+    [Fact]
     public void Discover_Psd1InputWithRequiredModulesAsHashtables_ReturnsModuleNamesInSourceOrder()
     {
         WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; RequiredModules = @(@{ ModuleName = 'Az.Accounts' }, @{ ModuleName = 'Az.Compute'; ModuleVersion = '5.0.0' }) }");
@@ -608,10 +661,55 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void Discover_Psd1InputWithMixedStringAndHashtableArray_OnlyCapturesHashtableModuleNames()
+    public void Discover_Psd1InputWithMixedStringAndHashtableArray_CapturesAllElementsInSourceOrder()
     {
-        // The leading bare string is not a module name; only the ModuleName inside the hashtable should be captured.
-        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; RequiredModules = @('not-a-module', @{ ModuleName = 'Az.Accounts' }) }");
+        // Mixed arrays are valid in PowerShell: bare strings are module names, hashtables contribute their ModuleName, and source order is preserved.
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; RequiredModules = @('Pester', @{ ModuleName = 'Az.Accounts' }) }");
+        WriteFile("MyModule.psm1", "# main");
+        var manifest = Path.Combine(_tempDir, "MyModule.psd1");
+        var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "Pester", "Az.Accounts" }, info.ManifestReferences.RequiredModules);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithInterleavedHashtablesAndStrings_PreservesSourceOrder()
+    {
+        // Each element is classified independently; hashtable-string-hashtable must come out in that order, not grouped.
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; RequiredModules = @(@{ ModuleName = 'Az.Accounts' }, 'Pester', @{ ModuleName = 'PSReadLine' }) }");
+        WriteFile("MyModule.psm1", "# main");
+        var manifest = Path.Combine(_tempDir, "MyModule.psd1");
+        var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "Az.Accounts", "Pester", "PSReadLine" }, info.ManifestReferences.RequiredModules);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithHashtableArrayMissingModuleName_SkipsHashtableButKeepsStrings()
+    {
+        // Mixed array with one hashtable that has no ModuleName (silently skipped) and one bare string (kept as module name).
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; RequiredModules = @('Pester', @{ ModuleVersion = '1.0.0' }) }");
+        WriteFile("MyModule.psm1", "# main");
+        var manifest = Path.Combine(_tempDir, "MyModule.psd1");
+        var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "Pester" }, info.ManifestReferences.RequiredModules);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithLowercaseModuleNameKey_StillCapturesModuleName()
+    {
+        // PowerShell manifest keys are case-insensitive; ModuleNameRegex must honor that to match the surrounding field regex behavior.
+        WriteFile("MyModule.psd1", "@{ RootModule = 'MyModule.psm1'; RequiredModules = @(@{ modulename = 'Az.Accounts' }) }");
         WriteFile("MyModule.psm1", "# main");
         var manifest = Path.Combine(_tempDir, "MyModule.psd1");
         var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");

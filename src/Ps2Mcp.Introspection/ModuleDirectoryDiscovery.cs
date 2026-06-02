@@ -57,32 +57,41 @@ public static partial class ModuleDirectoryDiscovery
                 $"Could not read manifest '{module.ManifestPath}': {ex.Message}");
         }
 
-        var nestedModules = ExtractQuotedArrayField(contents, "NestedModules");
-        var fileList = ExtractQuotedArrayField(contents, "FileList");
+        var nestedModules = ExtractQuotedArrayField(contents, NestedModulesRegex());
+        var fileList = ExtractQuotedArrayField(contents, FileListRegex());
         var requiredModules = ExtractRequiredModules(contents);
         return new ModuleDirectoryInfo(moduleDirectory, files, new ManifestReferences(nestedModules, fileList, requiredModules), null);
     }
 
-    private static IReadOnlyList<string> ExtractQuotedArrayField(string manifestContents, string fieldName)
+    private static IReadOnlyList<string> ExtractQuotedArrayField(string manifestContents, Regex fieldRegex)
     {
-        var match = fieldName switch
-        {
-            "NestedModules" => NestedModulesRegex().Match(manifestContents),
-            "FileList" => FileListRegex().Match(manifestContents),
-            _ => throw new ArgumentException($"Unsupported field '{fieldName}'.", nameof(fieldName)),
-        };
+        var match = fieldRegex.Match(manifestContents);
         if (!match.Success) return Array.Empty<string>();
 
-        if (match.Groups[1].Success) return new[] { match.Groups[1].Value };
-        if (match.Groups[2].Success) return new[] { match.Groups[2].Value };
+        if (match.Groups[1].Success) return new[] { NormalizeManifestPath(match.Groups[1].Value) };
+        if (match.Groups[2].Success) return new[] { NormalizeManifestPath(match.Groups[2].Value) };
 
         var body = match.Groups[3].Value;
         var result = new List<string>();
         foreach (Match itemMatch in QuotedStringRegex().Matches(body))
         {
-            result.Add(QuotedStringValue(itemMatch));
+            result.Add(NormalizeManifestPath(QuotedStringValue(itemMatch)));
         }
         return result;
+    }
+
+    private static string NormalizeManifestPath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            return normalized[2..];
+        }
+        if (normalized.StartsWith("/", StringComparison.Ordinal))
+        {
+            return normalized[1..];
+        }
+        return normalized;
     }
 
     private static IReadOnlyList<string> ExtractRequiredModules(string manifestContents)
@@ -94,12 +103,22 @@ public static partial class ModuleDirectoryDiscovery
         if (match.Groups[2].Success) return new[] { match.Groups[2].Value };
 
         var body = match.Groups[3].Value;
-        // Hashtable form (body contains '@{'): only ModuleName = ... entries count, so unrelated quoted strings (ModuleVersion, Description, etc.) are not captured. Pure-string form: every quoted string is a module name.
-        var extractor = body.Contains("@{", StringComparison.Ordinal) ? ModuleNameRegex() : QuotedStringRegex();
+        // Per-element parser: bare strings and hashtables (with ModuleName) both contribute, in source order; mixed arrays are valid in PowerShell.
         var names = new List<string>();
-        foreach (Match m in extractor.Matches(body))
+        foreach (Match m in RequiredModulesElementRegex().Matches(body))
         {
-            names.Add(QuotedStringValue(m));
+            if (m.Groups[1].Success || m.Groups[2].Success)
+            {
+                names.Add(QuotedStringValue(m));
+            }
+            else if (m.Groups[3].Success)
+            {
+                var nameMatch = ModuleNameRegex().Match(m.Groups[3].Value);
+                if (nameMatch.Success)
+                {
+                    names.Add(QuotedStringValue(nameMatch));
+                }
+            }
         }
         return names;
     }
@@ -114,10 +133,13 @@ public static partial class ModuleDirectoryDiscovery
     [GeneratedRegex(@"(?<![\w])RequiredModules\s*=\s*(?:'([^']*)'|""([^""]*)""|@\(([\s\S]*?)\))", RegexOptions.IgnoreCase)]
     private static partial Regex RequiredModulesFieldRegex();
 
+    [GeneratedRegex(@"'([^']*)'|""([^""]*)""|@\{([^{}]*)\}")]
+    private static partial Regex RequiredModulesElementRegex();
+
     [GeneratedRegex(@"'([^']*)'|""([^""]*)""")]
     private static partial Regex QuotedStringRegex();
 
-    [GeneratedRegex(@"ModuleName\s*=\s*(?:'([^']*)'|""([^""]*)"")")]
+    [GeneratedRegex(@"ModuleName\s*=\s*(?:'([^']*)'|""([^""]*)"")", RegexOptions.IgnoreCase)]
     private static partial Regex ModuleNameRegex();
 
     private static string QuotedStringValue(Match match) =>
