@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>Ps2Mcp.Emitters.Python</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

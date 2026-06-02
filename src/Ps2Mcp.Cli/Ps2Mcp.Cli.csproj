@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>Ps2Mcp.Cli</RootNamespace>
     <AssemblyName>ps2mcp</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
     <PublishAot>true</PublishAot>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
