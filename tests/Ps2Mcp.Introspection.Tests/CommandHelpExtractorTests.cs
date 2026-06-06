@@ -157,6 +157,23 @@ function Get-Foo { param([string]$Name, [int]$Count) }");
         Assert.Contains("Get-Foo -Name 'baz' -Count 3", help.Examples[1]);
     }
 
+    [Fact]
+    public void Extract_Examples_EmptyExampleBlockYieldsNoExample()
+    {
+        var function = ParseFunction(@"
+<#
+.EXAMPLE
+
+#>
+function Get-Foo { }");
+
+        var help = CommandHelpExtractor.Extract(function);
+
+        Assert.NotNull(help);
+        Assert.False(help!.HasExamples);
+        Assert.Empty(help.Examples);
+    }
+
     // ---- Integration --------------------------------------------------------
 
     [Fact]

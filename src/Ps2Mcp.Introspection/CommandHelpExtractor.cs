@@ -77,7 +77,11 @@ public static class CommandHelpExtractor
         var builder = ImmutableArray.CreateBuilder<string>(help.Examples.Count);
         foreach (var code in help.Examples)
         {
-            builder.Add(code ?? string.Empty);
+            var trimmed = NullIfEmpty(code);
+            if (trimmed is not null)
+            {
+                builder.Add(trimmed);
+            }
         }
         return builder.ToImmutable();
     }
