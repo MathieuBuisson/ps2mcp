@@ -36,7 +36,7 @@ public sealed record ToolDefinition(
         hash.Add(ToolName);
         hash.Add(SourceCommand);
         hash.Add(Description);
-        SequenceEqualityHelpers.AddToHash(hash, Parameters);
+        SequenceEqualityHelpers.AddToHash(ref hash, Parameters);
         hash.Add(RequiredParameterSet);
         hash.Add(Schema);
         hash.Add(Execution);

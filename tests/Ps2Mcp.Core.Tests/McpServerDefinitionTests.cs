@@ -86,6 +86,18 @@ public sealed class McpServerDefinitionTests
         Assert.NotEqual(a, b);
     }
 
+    [Fact]
+    public void HashCode_DiffersWhenOnlyToolsSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode. Two servers identical in every field
+        // except the Tools array length must produce different hash codes; otherwise hash-based collections collapse.
+        var module = new ModuleDefinition("M", null);
+        var a = new McpServerDefinition(module, ImmutableArray<ToolDefinition>.Empty);
+        var b = new McpServerDefinition(module, ImmutableArray.Create(MakeTool()));
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
+
     private static ToolDefinition MakeTool() =>
         new(
             ToolName: "GetFoo",

@@ -130,4 +130,15 @@ public sealed class SchemaDefinitionTests
         var innerProperty = deepestSchema.Properties[0];
         Assert.Equal("Value", innerProperty.Name);
     }
+
+    [Fact]
+    public void HashCode_DiffersWhenOnlyPropertiesSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode.
+        var prop = new SchemaProperty("Name", "string", null, null, null, null, null);
+        var a = new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null);
+        var b = new SchemaDefinition("object", ImmutableArray.Create(prop), ImmutableArray<string>.Empty, null);
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
 }

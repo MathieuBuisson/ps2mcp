@@ -37,8 +37,8 @@ public sealed record ParameterDefinition(
         hash.Add(IsSecure);
         hash.Add(Description);
         hash.Add(DefaultValue);
-        SequenceEqualityHelpers.AddToHash(hash, Aliases);
-        SequenceEqualityHelpers.AddToHash(hash, ParameterSets);
+        SequenceEqualityHelpers.AddToHash(ref hash, Aliases);
+        SequenceEqualityHelpers.AddToHash(ref hash, ParameterSets);
         return hash.ToHashCode();
     }
 }

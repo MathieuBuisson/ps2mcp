@@ -61,4 +61,14 @@ public sealed class HelpMetadataTests
 
         Assert.NotEqual(a, b);
     }
+
+    [Fact]
+    public void HashCode_DiffersWhenOnlyExamplesSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode.
+        var a = new HelpMetadata("S", "D", ImmutableArray<HelpExample>.Empty);
+        var b = new HelpMetadata("S", "D", ImmutableArray.Create(new HelpExample(null, "Get-Foo -Name bar", null)));
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
 }

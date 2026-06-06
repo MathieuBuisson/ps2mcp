@@ -67,6 +67,17 @@ public sealed class ToolDefinitionTests
         Assert.NotEqual(a, mutated);
     }
 
+    [Fact]
+    public void HashCode_DiffersWhenOnlyParametersSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode.
+        var param = new ParameterDefinition("Name", "string", true, false, null, null, ImmutableArray<string>.Empty, ImmutableArray<string>.Empty);
+        var a = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray<ParameterDefinition>.Empty, null, EmptySchema(), new ExecutionDefinition(4), null, null);
+        var b = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param), null, EmptySchema(), new ExecutionDefinition(4), null, null);
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
+
     private static ToolDefinition MakeTool(string? requiredParameterSet, HelpMetadata? help, OutputMetadata? output) =>
         new(
             ToolName: "GetFoo",

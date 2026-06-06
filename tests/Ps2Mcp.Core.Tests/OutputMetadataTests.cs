@@ -56,4 +56,14 @@ public sealed class OutputMetadataTests
 
         Assert.NotEqual(a, b);
     }
+
+    [Fact]
+    public void HashCode_DiffersWhenOnlyOutputTypeArgumentsSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode.
+        var a = new OutputMetadata("List", null);
+        var b = new OutputMetadata("List", ImmutableArray.Create("string"));
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
 }

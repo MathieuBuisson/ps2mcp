@@ -33,7 +33,7 @@ public sealed record SchemaProperty(
         var hash = new HashCode();
         hash.Add(Name);
         hash.Add(Type);
-        SequenceEqualityHelpers.AddNullableToHash(hash, Enum);
+        SequenceEqualityHelpers.AddNullableToHash(ref hash, Enum);
         hash.Add(Minimum);
         hash.Add(Maximum);
         hash.Add(Pattern);

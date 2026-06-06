@@ -24,8 +24,8 @@ public sealed record SchemaDefinition(
     {
         var hash = new HashCode();
         hash.Add(Type);
-        SequenceEqualityHelpers.AddToHash(hash, Properties);
-        SequenceEqualityHelpers.AddToHash(hash, Required);
+        SequenceEqualityHelpers.AddToHash(ref hash, Properties);
+        SequenceEqualityHelpers.AddToHash(ref hash, Required);
         hash.Add(Items);
         return hash.ToHashCode();
     }

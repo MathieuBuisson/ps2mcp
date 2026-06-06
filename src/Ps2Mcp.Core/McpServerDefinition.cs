@@ -23,7 +23,7 @@ public sealed record McpServerDefinition(
         var hash = new HashCode();
         hash.Add(IrVersion);
         hash.Add(Module);
-        SequenceEqualityHelpers.AddToHash(hash, Tools);
+        SequenceEqualityHelpers.AddToHash(ref hash, Tools);
         return hash.ToHashCode();
     }
 }

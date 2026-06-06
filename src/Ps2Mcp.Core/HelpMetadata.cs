@@ -23,7 +23,7 @@ public sealed record HelpMetadata(
         var hash = new HashCode();
         hash.Add(Synopsis);
         hash.Add(Description);
-        SequenceEqualityHelpers.AddToHash(hash, Examples);
+        SequenceEqualityHelpers.AddToHash(ref hash, Examples);
         return hash.ToHashCode();
     }
 }

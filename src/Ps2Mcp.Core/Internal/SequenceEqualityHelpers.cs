@@ -24,16 +24,16 @@ internal static class SequenceEqualityHelpers
         return SequenceEqual(left.Value, right.Value);
     }
 
-    public static void AddToHash<T>(HashCode hash, ImmutableArray<T> list)
+    public static void AddToHash<T>(ref HashCode hash, ImmutableArray<T> list)
     {
         hash.Add(list.Length);
         for (int i = 0; i < list.Length; i++) hash.Add(list[i]);
     }
 
-    public static void AddNullableToHash<T>(HashCode hash, ImmutableArray<T>? list)
+    public static void AddNullableToHash<T>(ref HashCode hash, ImmutableArray<T>? list)
     {
         if (!list.HasValue) { hash.Add(false); return; }
         hash.Add(true);
-        AddToHash(hash, list.Value);
+        AddToHash(ref hash, list.Value);
     }
 }

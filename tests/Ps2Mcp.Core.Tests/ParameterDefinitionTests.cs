@@ -76,6 +76,16 @@ public sealed class ParameterDefinitionTests
         Assert.NotEqual(a, b);
     }
 
+    [Fact]
+    public void HashCode_DiffersWhenOnlyAliasesSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode.
+        var a = new ParameterDefinition("Name", "string", false, false, null, null, ImmutableArray<string>.Empty, ImmutableArray<string>.Empty);
+        var b = new ParameterDefinition("Name", "string", false, false, null, null, ImmutableArray.Create("CN", "ComputerName"), ImmutableArray<string>.Empty);
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
+
     private static ParameterDefinition MakeParameter() =>
         new(
             Name: "Name",

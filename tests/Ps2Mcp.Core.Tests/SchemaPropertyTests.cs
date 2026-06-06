@@ -114,4 +114,14 @@ public sealed class SchemaPropertyTests
         Assert.Equal(a, b);
         Assert.Equal(a.GetHashCode(), b.GetHashCode());
     }
+
+    [Fact]
+    public void HashCode_DiffersWhenOnlyEnumSequenceContentsDiffer()
+    {
+        // Regression: sequence contents must contribute to GetHashCode.
+        var a = new SchemaProperty("Color", "string", null, null, null, null, null);
+        var b = new SchemaProperty("Color", "string", ImmutableArray.Create("Red", "Green", "Blue"), null, null, null, null);
+
+        Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
+    }
 }

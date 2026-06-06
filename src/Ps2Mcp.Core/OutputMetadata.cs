@@ -20,7 +20,7 @@ public sealed record OutputMetadata(
     {
         var hash = new HashCode();
         hash.Add(OutputTypeName);
-        SequenceEqualityHelpers.AddNullableToHash(hash, OutputTypeArguments);
+        SequenceEqualityHelpers.AddNullableToHash(ref hash, OutputTypeArguments);
         return hash.ToHashCode();
     }
 }
