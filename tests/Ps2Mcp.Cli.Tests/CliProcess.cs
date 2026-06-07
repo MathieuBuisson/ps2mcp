@@ -30,7 +30,7 @@ internal static class CliProcess
         return (process.ExitCode, stdoutTask.GetAwaiter().GetResult(), stderrTask.GetAwaiter().GetResult());
     }
 
-    private static string LocateCliExecutable()
+    internal static string LocateCliExecutable()
     {
         var testAssemblyPath = typeof(CliProcess).Assembly.Location;
         var testDir = Path.GetDirectoryName(testAssemblyPath)!;

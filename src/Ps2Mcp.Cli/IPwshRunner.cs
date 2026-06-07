@@ -29,3 +29,31 @@ internal sealed class PwshStartException : Exception
         _ => $"The '{executable}' executable could not be started: {innerException.Message}",
     };
 }
+
+// Thrown when a pwsh invocation exceeds its declared timeout. The process has been
+// killed by the time this exception is raised; the partial stdout/stderr captured up
+// to the kill point are exposed on the exception so callers can log diagnostic context
+// (e.g. what the module was emitting when it hung).
+internal sealed class PwshTimeoutException : Exception
+{
+    public PwshTimeoutException(
+        TimeSpan timeout,
+        string partialStandardOutput,
+        string partialStandardError,
+        string executable)
+        : base(BuildMessage(timeout, executable))
+    {
+        Timeout = timeout;
+        PartialStandardOutput = partialStandardOutput;
+        PartialStandardError = partialStandardError;
+        Executable = executable;
+    }
+
+    public TimeSpan Timeout { get; }
+    public string PartialStandardOutput { get; }
+    public string PartialStandardError { get; }
+    public string Executable { get; }
+
+    private static string BuildMessage(TimeSpan timeout, string executable) =>
+        $"The '{executable}' process did not exit within the {timeout.TotalSeconds:0.##}-second timeout and was killed.";
+}
