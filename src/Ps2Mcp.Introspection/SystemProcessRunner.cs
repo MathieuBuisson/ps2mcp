@@ -2,9 +2,9 @@
 using System.Diagnostics;
 using System.IO;
 
-namespace Ps2Mcp.Cli;
+namespace Ps2Mcp.Introspection;
 
-internal sealed class SystemProcessRunner : IProcessRunner
+public sealed class SystemProcessRunner : IProcessRunner
 {
     public IProcessHandle Start(ProcessStartInfo startInfo)
     {
@@ -20,7 +20,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
     }
 }
 
-internal sealed class SystemProcessHandle : IProcessHandle
+public sealed class SystemProcessHandle : IProcessHandle
 {
     private readonly Process _process;
 
@@ -57,13 +57,13 @@ internal sealed class SystemProcessHandle : IProcessHandle
     // Maps a TimeSpan to the int argument of Process.WaitForExit(int):
     //   - Timeout.InfiniteTimeSpan => -1 (caller must use parameterless WaitForExit)
     //   - Any other negative value => 0 (Process.WaitForExit's "return immediately" semantics
-    //     for non-(-1) negatives; we surface this as an explicit clamp rather than passing
+    //     for any non-(-1) negatives; we surface this as an explicit clamp rather than passing
     //     a negative through to the OS)
     //   - Values exceeding int.MaxValue ms => int.MaxValue (clamped to int range)
     //   - Sub-millisecond finite timeouts (e.g. 0.5 ms) are truncated to 0 via the
     //     (int) cast; callers that need sub-ms precision should not be using this API
     //   - Otherwise, the value is returned as a whole-millisecond int
-    internal static int ConvertToMilliseconds(TimeSpan timeout)
+    public static int ConvertToMilliseconds(TimeSpan timeout)
     {
         if (timeout == System.Threading.Timeout.InfiniteTimeSpan)
         {

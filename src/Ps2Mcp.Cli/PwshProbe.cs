@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using Ps2Mcp.Introspection;
 
 namespace Ps2Mcp.Cli;
 

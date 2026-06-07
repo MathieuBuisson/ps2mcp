@@ -1,19 +1,24 @@
 ﻿using System;
 
-namespace Ps2Mcp.Cli;
+namespace Ps2Mcp.Introspection;
 
-internal interface IPwshRunner
+// The pwsh-running surface is consumed by both Ps2Mcp.Cli (PwshProbe, Program) and
+// Ps2Mcp.Introspection (BinaryModuleIntrospector). Exposing these types as public keeps
+// the friend-assembly / ProduceReferenceAssembly configuration out of the way; the surface
+// is internal to the compiler's implementation and is not intended as a stable API.
+
+public interface IPwshRunner
 {
     PwshInvocationResult Invoke(PwshInvocation invocation);
 }
 
-internal enum PwshStartFailureKind
+public enum PwshStartFailureKind
 {
     NotFound,
     Failed,
 }
 
-internal sealed class PwshStartException : Exception
+public sealed class PwshStartException : Exception
 {
     public PwshStartException(PwshStartFailureKind kind, string executable, Exception innerException)
         : base(BuildMessage(kind, executable, innerException), innerException)
@@ -34,7 +39,7 @@ internal sealed class PwshStartException : Exception
 // killed by the time this exception is raised; the partial stdout/stderr captured up
 // to the kill point are exposed on the exception so callers can log diagnostic context
 // (e.g. what the module was emitting when it hung).
-internal sealed class PwshTimeoutException : Exception
+public sealed class PwshTimeoutException : Exception
 {
     public PwshTimeoutException(
         TimeSpan timeout,

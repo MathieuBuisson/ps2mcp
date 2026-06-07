@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Management.Automation.Language;
-using System.Text;
-using System.Text.RegularExpressions;
 
 namespace Ps2Mcp.Introspection;
 
@@ -155,15 +153,9 @@ public static partial class ParameterAttributeExtractor
             allowEmptyCollection);
     }
 
-    // Humanization pipeline, applied in order to TypeName.FullName:
-    //   1. Strip the CLR generic-arity marker `N (backtick + digits) so List`1[string] surfaces
-    //      as List[string].
-    //   2. Collapse the [[ and ]] nested-generic markers to single brackets (these markers
-    //      disambiguate inner-generic boundaries in CLR type names).
-    //   3. Strip CLR-looking namespace prefixes (System.* and Microsoft.*); application
-    //      namespaces are preserved verbatim so disambiguation survives.
-    //   4. No surrounding brackets are added; the output shape matches the simple-type tests
-    //      (e.g. "string", "int") for consistency.
+    // Humanization is delegated to the shared TypeNameHumanizer; the pipeline (strip
+    // generic-arity, collapse nested brackets, strip CLR namespace prefix) is identical
+    // for ITypeName and the raw FullName string used by the binary mapper.
     private static string HumanizeTypeName(ITypeName typeName)
     {
         var raw = typeName.FullName;
@@ -171,74 +163,8 @@ public static partial class ParameterAttributeExtractor
         {
             raw = typeName.Name;
         }
-        if (string.IsNullOrEmpty(raw))
-        {
-            return "object";
-        }
-
-        // Step 1: strip the CLR generic-arity marker `N (backtick + digits).
-        var s = GenericArityRegex().Replace(raw, string.Empty);
-
-        // Step 2: collapse the [[ and ]] nested-generic markers to single brackets. A naive
-        // single-pass replacement over-collapses legitimate close pairs in cases like
-        // Nullable[Nullable[int]] (where each generic has a single type arg, so the FullName
-        // carries no [[ marker); a stateful scan is required to track which [[ opens have
-        // been consumed.
-        s = CollapseNestedBrackets(s);
-
-        // Step 3: strip CLR-looking namespace prefixes; application namespaces are preserved.
-        s = ClrNamespacePrefixRegex().Replace(s, m => m.Value[(m.Value.LastIndexOf('.') + 1)..]);
-
-        return s;
+        return TypeNameHumanizer.Humanize(raw);
     }
-
-    // Collapses the CLR nested-generic markers ([[ and ]]) to single brackets, leaving
-    // legitimate close pairs untouched. A [[ collapses to [ and marks the open as unconsumed;
-    // a subsequent ]] collapses to ] only when it matches the unconsumed open; otherwise both
-    // ] characters are emitted verbatim. This is the only safe shape for cases like
-    // Nullable[Nullable[int]] where two adjacent ] characters are legitimate close pairs.
-    private static string CollapseNestedBrackets(string s)
-    {
-        var sb = new StringBuilder(s.Length);
-        var unconsumedOpen = false;
-        var i = 0;
-        while (i < s.Length)
-        {
-            var ch = s[i];
-            if (ch == '[' && i + 1 < s.Length && s[i + 1] == '[')
-            {
-                sb.Append('[');
-                unconsumedOpen = true;
-                i += 2;
-            }
-            else if (ch == ']' && i + 1 < s.Length && s[i + 1] == ']')
-            {
-                if (unconsumedOpen)
-                {
-                    sb.Append(']');
-                    unconsumedOpen = false;
-                    i += 2;
-                }
-                else
-                {
-                    sb.Append(']').Append(']');
-                    i += 2;
-                }
-            }
-            else
-            {
-                sb.Append(ch);
-                i++;
-            }
-        }
-        return sb.ToString();
-    }
-
-    [GeneratedRegex(@"`\d+")]
-    private static partial Regex GenericArityRegex();
-
-    [GeneratedRegex(@"\b(?:System|Microsoft)(?:\.\w+)+\b")]
-    private static partial Regex ClrNamespacePrefixRegex();
 
     // Tries to format a constant value as an invariant-culture string when the value is one of
     // the .NET numeric primitive types (SByte through Decimal). Used by ValidateRange bound

@@ -2,17 +2,17 @@
 using System.Diagnostics;
 using System.IO;
 
-namespace Ps2Mcp.Cli;
+namespace Ps2Mcp.Introspection;
 
 // Thin abstraction over System.Diagnostics.Process so PwshRunner can be unit-tested
 // without spawning real OS processes. Production binds SystemProcessRunner; tests bind
 // a fake that returns canned stdout/stderr/exit codes and can simulate timeouts.
-internal interface IProcessRunner
+public interface IProcessRunner
 {
     IProcessHandle Start(ProcessStartInfo startInfo);
 }
 
-internal interface IProcessHandle : IDisposable
+public interface IProcessHandle : IDisposable
 {
     int ExitCode { get; }
     TextReader StandardOutput { get; }

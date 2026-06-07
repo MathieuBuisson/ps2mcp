@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.IO;
+using Ps2Mcp.Introspection;
 
 namespace Ps2Mcp.Cli.Tests;
 

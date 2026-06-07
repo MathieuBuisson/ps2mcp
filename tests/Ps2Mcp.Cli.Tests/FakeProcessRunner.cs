@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using Ps2Mcp.Introspection;
 
 namespace Ps2Mcp.Cli.Tests;
 

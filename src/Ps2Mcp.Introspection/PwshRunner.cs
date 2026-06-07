@@ -3,9 +3,9 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading.Tasks;
 
-namespace Ps2Mcp.Cli;
+namespace Ps2Mcp.Introspection;
 
-internal sealed class PwshRunner : IPwshRunner
+public sealed class PwshRunner : IPwshRunner
 {
     private const int ErrorFileNotFound = 2;
 

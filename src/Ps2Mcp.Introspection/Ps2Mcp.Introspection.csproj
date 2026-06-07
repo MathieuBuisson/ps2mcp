@@ -13,4 +13,12 @@
     <ProjectReference Include="..\Ps2Mcp.Core\Ps2Mcp.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Introspection.ps1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ps2Mcp.Introspection.Tests" />
+  </ItemGroup>
+
 </Project>

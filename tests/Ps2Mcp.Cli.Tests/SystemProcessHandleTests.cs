@@ -1,4 +1,5 @@
 ﻿using System;
+using Ps2Mcp.Introspection;
 
 namespace Ps2Mcp.Cli.Tests;
 
