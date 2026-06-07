@@ -272,7 +272,17 @@ public static partial class ParameterAttributeExtractor
             : shortName;
     }
 
-    private static bool IsAttributeNamed(AttributeAst attribute, string name) =>
+    /// <summary>
+    /// Returns <c>true</c> when the given attribute's type name resolves to the supplied
+    /// short name, case-insensitively and with an optional <c>Attribute</c> suffix ignored.
+    /// </summary>
+    /// <remarks>
+    /// Exposed (not just internal) because the attribute-matching step is needed outside this
+    /// extractor too — for example, <c>ScriptModuleIntrospector</c> matches
+    /// <c>[OutputType()]</c> by short name. Duplicating the rightmost-segment + suffix-strip
+    /// logic in every caller would be a maintenance hazard.
+    /// </remarks>
+    public static bool IsAttributeNamed(AttributeAst attribute, string name) =>
         string.Equals(NormalizeAttributeName(attribute.TypeName.Name), name, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMandatorySet(AttributeAst parameterAttribute)

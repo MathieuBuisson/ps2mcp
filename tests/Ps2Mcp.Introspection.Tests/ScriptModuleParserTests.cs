@@ -69,9 +69,9 @@ public sealed class ScriptModuleParserTests : IDisposable
     public void Parse_DiscoversMultipleTopLevelFunctions()
     {
         var path = WritePsm1(
-            "function Get-Foo { 'foo' }\n" +
-            "function Set-Foo { 'foo' }\n" +
-            "function Remove-Foo { 'foo' }\n");
+            "function Get-Foo { 'foo' }" + Environment.NewLine +
+            "function Set-Foo { 'foo' }" + Environment.NewLine +
+            "function Remove-Foo { 'foo' }" + Environment.NewLine);
 
         var result = ScriptModuleParser.Parse(path);
 
@@ -106,13 +106,13 @@ public sealed class ScriptModuleParserTests : IDisposable
         // Production PowerShell modules use an explicit param() block; that yields the well-known
         // ParamBlockAst/ParameterAst structure that the follow-on extractors (Phase 5 Task 3+) consume.
         var path = WritePsm1(
-            "function Get-Foo {\n" +
-            "    param(\n" +
-            "        [Parameter(Mandatory)]\n" +
-            "        [string]\n" +
-            "        $Name\n" +
-            "    )\n" +
-            "}\n");
+            "function Get-Foo {" + Environment.NewLine +
+            "    param(" + Environment.NewLine +
+            "        [Parameter(Mandatory)]" + Environment.NewLine +
+            "        [string]" + Environment.NewLine +
+            "        $Name" + Environment.NewLine +
+            "    )" + Environment.NewLine +
+            "}" + Environment.NewLine);
 
         var result = ScriptModuleParser.Parse(path);
 
@@ -135,10 +135,10 @@ public sealed class ScriptModuleParserTests : IDisposable
         // wraps it in an AttributedExpressionAst inside the body's EndBlock. We locate it via FindAll
         // so the test mirrors what an extractor would do at runtime.
         var path = WritePsm1(
-            "function Get-Foo {\n" +
-            "    [OutputType('string')]\n" +
-            "    'hello'\n" +
-            "}\n");
+            "function Get-Foo {" + Environment.NewLine +
+            "    [OutputType('string')]" + Environment.NewLine +
+            "    'hello'" + Environment.NewLine +
+            "}" + Environment.NewLine);
 
         var result = ScriptModuleParser.Parse(path);
 
@@ -155,17 +155,17 @@ public sealed class ScriptModuleParserTests : IDisposable
     public void Parse_SurfacesCommentBasedHelp()
     {
         var path = WritePsm1(
-            "function Get-Foo {\n" +
-            "    <#\n" +
-            "        .SYNOPSIS\n" +
-            "        Gets a foo.\n" +
-            "        .DESCRIPTION\n" +
-            "        Returns a foo object.\n" +
-            "        .EXAMPLE\n" +
-            "        Get-Foo\n" +
-            "    #>\n" +
-            "    'hello'\n" +
-            "}\n");
+            "function Get-Foo {" + Environment.NewLine +
+            "    <#" + Environment.NewLine +
+            "        .SYNOPSIS" + Environment.NewLine +
+            "        Gets a foo." + Environment.NewLine +
+            "        .DESCRIPTION" + Environment.NewLine +
+            "        Returns a foo object." + Environment.NewLine +
+            "        .EXAMPLE" + Environment.NewLine +
+            "        Get-Foo" + Environment.NewLine +
+            "    #>" + Environment.NewLine +
+            "    'hello'" + Environment.NewLine +
+            "}" + Environment.NewLine);
 
         var result = ScriptModuleParser.Parse(path);
 

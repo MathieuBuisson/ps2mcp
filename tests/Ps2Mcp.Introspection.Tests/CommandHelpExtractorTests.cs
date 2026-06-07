@@ -105,6 +105,8 @@ function Get-Foo { param([string]$Name) }");
         Assert.NotNull(help!.Description);
         Assert.Contains("First line of description.", help.Description);
         Assert.Contains("Second line of description.", help.Description);
+        // The PowerShell help parser emits LF-only output regardless of source line endings,
+        // so we assert on '\n' directly rather than Environment.NewLine[0] (which would be '\r' on Windows).
         Assert.Contains('\n', help.Description);
     }
 

@@ -527,15 +527,15 @@ public sealed class ParameterAttributeExtractorTests
     public void Extract_FullIntegration_RealisticGetFooParameter()
     {
         // Mirrors a typical "mandatory string with enum constraint and an alias" production parameter.
-        var script = "function Get-Foo {\n" +
-                     "    param(\n" +
-                     "        [Parameter(Mandatory)]\n" +
-                     "        [Alias('N','Nm')]\n" +
-                     "        [ValidateSet('A','B','C')]\n" +
-                     "        [ValidateRange(1, 99)]\n" +
-                     "        [string] $Name\n" +
-                     "    )\n" +
-                     "}\n";
+        var script = "function Get-Foo {" + Environment.NewLine +
+                     "    param(" + Environment.NewLine +
+                     "        [Parameter(Mandatory)]" + Environment.NewLine +
+                     "        [Alias('N','Nm')]" + Environment.NewLine +
+                     "        [ValidateSet('A','B','C')]" + Environment.NewLine +
+                     "        [ValidateRange(1, 99)]" + Environment.NewLine +
+                     "        [string] $Name" + Environment.NewLine +
+                     "    )" + Environment.NewLine +
+                     "}" + Environment.NewLine;
         var info = ExtractFrom(script, "Name");
 
         Assert.Equal("string", info.Type);

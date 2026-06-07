@@ -25,7 +25,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     [Fact]
     public void Discover_Psd1Input_ReturnsManifestDirectoryAndAllFiles()
     {
-        WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'\n");
+        WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
         WriteFile("MyModule.psm1", "# script body");
         var manifest = Path.Combine(_tempDir, "MyModule.psd1");
         var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
@@ -54,7 +54,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     [Fact]
     public void Discover_RecursivelyEnumeratesFilesInSubdirectories()
     {
-        WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'\n");
+        WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
         WriteFile("MyModule.psm1", "# script body");
         var subDir = Path.Combine(_tempDir, "private");
         Directory.CreateDirectory(subDir);
@@ -89,7 +89,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     [Fact]
     public void Discover_DirectoryWithOnlyManifest_ReturnsManifestInFileList()
     {
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
         var resolved = MakeResolvedModule(manifest, manifest, "MyModule", ModuleKind.Script);
 
         var info = ModuleDirectoryDiscovery.Discover(resolved);
@@ -255,7 +255,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     [Fact]
     public void Discover_Psd1InputWithoutManifestReferences_ReturnsEmptyManifestReferences()
     {
-        WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'\n");
+        WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
         WriteFile("MyModule.psm1", "# main");
         var manifest = Path.Combine(_tempDir, "MyModule.psd1");
         var entryPoint = Path.Combine(_tempDir, "MyModule.psm1");
@@ -353,7 +353,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     [Fact]
     public void Discover_Psd1InputWithBinaryRootModule_DiscoversDllAndAllFiles()
     {
-        WriteFile("BinaryModule.psd1", "RootModule = 'BinaryModule.dll'\n");
+        WriteFile("BinaryModule.psd1", "RootModule = 'BinaryModule.dll'" + Environment.NewLine);
         WriteFile("BinaryModule.dll", "fake-dll");
         var manifest = Path.Combine(_tempDir, "BinaryModule.psd1");
         var entryPoint = Path.Combine(_tempDir, "BinaryModule.dll");
@@ -399,7 +399,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     [Fact]
     public void Discover_BinaryModuleWithSubdirectory_RecursesAndNormalizesRelativePath()
     {
-        WriteFile("BinaryModule.psd1", "RootModule = 'BinaryModule.dll'\n");
+        WriteFile("BinaryModule.psd1", "RootModule = 'BinaryModule.dll'" + Environment.NewLine);
         WriteFile("BinaryModule.dll", "fake-dll");
         var depDir = Path.Combine(_tempDir, "runtimes", "linux", "lib");
         Directory.CreateDirectory(depDir);
@@ -747,7 +747,7 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
         {
             return;
         }
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
         var entryPoint = WriteFile("MyModule.psm1", "# main");
         var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
         using var lockHandle = new FileStream(manifest, FileMode.Open, FileAccess.Read, FileShare.None);

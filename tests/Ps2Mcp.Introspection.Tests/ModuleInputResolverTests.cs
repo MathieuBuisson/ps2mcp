@@ -41,7 +41,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     public void Resolve_Psd1PathWithScriptRootModule_ReturnsScriptModule()
     {
         WriteFile("MyModule.psm1", "# script body");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -59,7 +59,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     public void Resolve_Psd1PathWithBinaryRootModule_ReturnsBinaryModule()
     {
         WriteFile("MyModule.dll", "fake-dll");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.dll'\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.dll'" + Environment.NewLine);
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -73,7 +73,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     public void Resolve_Psd1PathWithUnquotedRootModule_ReturnsScriptModule()
     {
         WriteFile("MyModule.psm1", "# script body");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = MyModule.psm1\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = MyModule.psm1" + Environment.NewLine);
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -88,7 +88,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     public void Resolve_Psd1PathWithRelativeRootModule_ResolvesRelativeToManifestDirectory()
     {
         WriteFile("MyModule.psm1", "# script body");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = '.\\MyModule.psm1'\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = '.\\MyModule.psm1'" + Environment.NewLine);
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -101,7 +101,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     [Fact]
     public void Resolve_Psd1PathWithoutRootModule_ReturnsInvalid()
     {
-        var manifest = WriteFile("MyModule.psd1", "Description = 'no root module here'\n");
+        var manifest = WriteFile("MyModule.psd1", "Description = 'no root module here'" + Environment.NewLine);
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -113,7 +113,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     [Fact]
     public void Resolve_Psd1PathWithMissingRootModuleFile_ReturnsInvalid()
     {
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'DoesNotExist.psm1'\n");
+        var manifest = WriteFile("MyModule.psd1", "RootModule = 'DoesNotExist.psm1'" + Environment.NewLine);
 
         var result = ModuleInputResolver.Resolve(manifest);
 
