@@ -63,8 +63,7 @@ function Get-Foo { param([string]$Name) }");
         Assert.True(help.HasParameters);
         Assert.False(help.HasExamples);
         Assert.Single(help.Parameters);
-        // PowerShell's help parser uppercases parameter names in .PARAMETER blocks; the
-        // extractor preserves the SDK's normalization rather than re-casing.
+        // Parameter names are returned as normalized by PowerShell's help parser (typically uppercase).
         Assert.Equal("NAME", help.Parameters[0].Name);
         Assert.Equal("The name of the foo.", help.Parameters[0].Description);
     }
@@ -127,8 +126,7 @@ function Get-Foo { param([string]$Name, [int]$Count) }");
 
         Assert.NotNull(help);
         Assert.Equal(2, help!.Parameters.Length);
-        // PowerShell's help parser uppercases parameter names in .PARAMETER blocks; the
-        // extractor preserves the SDK's normalization rather than re-casing.
+        // Parameter names are returned as normalized by PowerShell's help parser (typically uppercase).
         Assert.Equal("NAME", help.Parameters[0].Name);
         Assert.Equal("The name of the foo.", help.Parameters[0].Description);
         Assert.Equal("COUNT", help.Parameters[1].Name);
@@ -200,12 +198,53 @@ function Get-Foo { param([string]$Name) }");
         Assert.Equal("Gets a foo by name.", help!.Synopsis);
         Assert.Contains("This function retrieves a foo", help.Description);
         Assert.Single(help.Parameters);
-        // PowerShell's help parser uppercases parameter names in .PARAMETER blocks; the
-        // extractor preserves the SDK's normalization rather than re-casing.
+        // Parameter names are returned as normalized by PowerShell's help parser (typically uppercase).
         Assert.Equal("NAME", help.Parameters[0].Name);
         Assert.Equal("The name of the foo to retrieve.", help.Parameters[0].Description);
         Assert.Single(help.Examples);
         Assert.Contains("Get-Foo -Name 'bar'", help.Examples[0]);
+    }
+
+    [Fact]
+    public void Extract_ParameterDescriptions_AllNullYieldsHasParameterDescriptionsFalse()
+    {
+        var function = ParseFunction(@"
+<#
+.PARAMETER Name
+
+.PARAMETER Count
+
+#>
+function Get-Foo { param([string]$Name, [int]$Count) }");
+
+        var help = CommandHelpExtractor.Extract(function);
+
+        Assert.NotNull(help);
+        // .PARAMETER blocks are declared, so HasParameters is true…
+        Assert.True(help!.HasParameters);
+        // …but every description is null, so the stricter check is false.
+        Assert.False(help.HasParameterDescriptions);
+        Assert.Equal(2, help.Parameters.Length);
+        Assert.All(help.Parameters, p => Assert.Null(p.Description));
+    }
+
+    [Fact]
+    public void Extract_ParameterDescriptions_AtLeastOneNonNullYieldsTrue()
+    {
+        var function = ParseFunction(@"
+<#
+.PARAMETER Name
+The name to use.
+.PARAMETER Count
+
+#>
+function Get-Foo { param([string]$Name, [int]$Count) }");
+
+        var help = CommandHelpExtractor.Extract(function);
+
+        Assert.NotNull(help);
+        Assert.True(help!.HasParameters);
+        Assert.True(help.HasParameterDescriptions);
     }
 
     // ---- Helpers ------------------------------------------------------------

@@ -36,8 +36,8 @@ public static class CommandHelpExtractor
         }
 
         return new CommandHelpInfo(
-            NullIfEmpty(help.Synopsis),
-            NullIfEmpty(help.Description),
+            NormalizeNullOrWhiteSpace(help.Synopsis),
+            NormalizeNullOrWhiteSpace(help.Description),
             ExtractParameters(help),
             ExtractExamples(help));
     }
@@ -47,9 +47,13 @@ public static class CommandHelpExtractor
     // wants to distinguish "not declared" from "declared with no content", and the
     // downstream consumers do not need the trailing newlines. Collapse empty-or-whitespace
     // to null and trim the rest at the extraction boundary.
-    private static string? NullIfEmpty(string? value) =>
+    private static string? NormalizeNullOrWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    /// <summary>
+    /// Converts the dictionary of parameter names and descriptions from <see cref="CommentHelpInfo.Parameters"/>
+    /// into an immutable array of <see cref="CommandHelpInfo.ParameterHelp"/> records.
+    /// </summary>
     private static ImmutableArray<CommandHelpInfo.ParameterHelp> ExtractParameters(CommentHelpInfo help)
     {
         if (help.Parameters is null || help.Parameters.Count == 0)
@@ -62,11 +66,15 @@ public static class CommandHelpExtractor
         {
             builder.Add(new CommandHelpInfo.ParameterHelp(
                 p.Key,
-                NullIfEmpty(p.Value)));
+                NormalizeNullOrWhiteSpace(p.Value)));
         }
         return builder.ToImmutable();
     }
 
+    /// <summary>
+    /// Converts the list of example code blocks from <see cref="CommentHelpInfo.Examples"/>
+    /// into an immutable array of trimmed strings, dropping any that are empty or whitespace-only.
+    /// </summary>
     private static ImmutableArray<string> ExtractExamples(CommentHelpInfo help)
     {
         if (help.Examples is null || help.Examples.Count == 0)
@@ -77,10 +85,10 @@ public static class CommandHelpExtractor
         var builder = ImmutableArray.CreateBuilder<string>(help.Examples.Count);
         foreach (var code in help.Examples)
         {
-            var trimmed = NullIfEmpty(code);
-            if (trimmed is not null)
+            var normalized = NormalizeNullOrWhiteSpace(code);
+            if (normalized is not null)
             {
-                builder.Add(trimmed);
+                builder.Add(normalized);
             }
         }
         return builder.ToImmutable();

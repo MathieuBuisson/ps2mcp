@@ -1,4 +1,5 @@
 ﻿using System.Collections.Immutable;
+using System.Linq;
 
 namespace Ps2Mcp.Introspection;
 
@@ -35,8 +36,17 @@ public sealed record CommandHelpInfo(
 
     /// <summary>
     /// Gets a value indicating whether the function declares at least one .PARAMETER block.
+    /// This is true even when every declared block has an empty description; see
+    /// <see cref="HasParameterDescriptions"/> for a stricter check.
     /// </summary>
     public bool HasParameters => !Parameters.IsDefaultOrEmpty;
+
+    /// <summary>
+    /// Gets a value indicating whether at least one declared .PARAMETER block has a non-null
+    /// description. This is a stricter check than <see cref="HasParameters"/>, which is true
+    /// whenever a .PARAMETER block is declared regardless of whether its description is empty.
+    /// </summary>
+    public bool HasParameterDescriptions => Parameters.Any(p => p.Description is not null);
 
     /// <summary>
     /// Gets a value indicating whether the function declares at least one .EXAMPLE block.
