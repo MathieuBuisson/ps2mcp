@@ -1,4 +1,4 @@
-# Introspection.ps1 - Binary module metadata extraction.
+﻿# Introspection.ps1 - Binary module metadata extraction.
 # Invoked as `pwsh -NoProfile -NonInteractive -File Introspection.ps1 -ModulePath <path>`.
 # Emits a single JSON object to stdout describing every command the module
 # exports. The C# BinaryModuleIntrospector deserializes that object via the
@@ -90,6 +90,21 @@ foreach ($cmd in $commands) {
                 $vfra = [bool]$pattr.ValueFromRemainingArguments
             }
 
+            # Determine which parameter sets this parameter actually belongs to.
+            # CommandMetadata exposes parameter-set membership per parameter via
+            # the set's Parameters collection (ReadOnlyCollection<CommandParameterInfo>);
+            # we iterate the command-level sets and check each element's Name
+            # property, rather than copying the full set list into every parameter
+            # (which would over-report membership for mutually exclusive sets).
+            $pSets = @()
+            if ($cmd.ParameterSets) {
+                foreach ($pset in $cmd.ParameterSets) {
+                    if ($pset.Parameters | Where-Object { $_.Name -eq $pname }) {
+                        $pSets += [string]$pset.Name
+                    }
+                }
+            }
+
             $paramPayloads += @{
                 name                            = [string]$pname
                 type                            = [string]$fullType
@@ -100,7 +115,7 @@ foreach ($cmd in $commands) {
                 valueFromRemainingArguments     = $vfra
                 aliases                         = $pAliases
                 isSwitch                        = $isSwitch
-                parameterSets                   = $setNames
+                parameterSets                   = $pSets
             }
         }
     }

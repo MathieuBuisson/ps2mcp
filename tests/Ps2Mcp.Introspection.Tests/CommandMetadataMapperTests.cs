@@ -160,6 +160,31 @@ public class CommandMetadataMapperTests
     }
 
     [Fact]
+    public void Map_RealPayload_MutuallyExclusiveParametersHaveDistinctParameterSets()
+    {
+        // Add-Content has mutually exclusive Path and LiteralPath parameter sets.
+        // The mapper must preserve per-parameter set membership, not copy the full
+        // command-level set list into every parameter.
+        var payload = LoadFixture();
+
+        var result = CommandMetadataMapper.Map(payload);
+        var addContent = result.Tools.Single(t => t.ToolName == "Add-Content");
+        var pathParam = addContent.Parameters.Single(p => p.Name == "Path");
+        var literalParam = addContent.Parameters.Single(p => p.Name == "LiteralPath");
+
+        // Path belongs to the Path set; LiteralPath belongs to the LiteralPath set.
+        Assert.Contains("Path", pathParam.ParameterSets);
+        Assert.DoesNotContain("LiteralPath", pathParam.ParameterSets);
+        Assert.Contains("LiteralPath", literalParam.ParameterSets);
+        Assert.DoesNotContain("Path", literalParam.ParameterSets);
+
+        // Value (a common parameter) belongs to both sets.
+        var valueParam = addContent.Parameters.Single(p => p.Name == "Value");
+        Assert.Contains("Path", valueParam.ParameterSets);
+        Assert.Contains("LiteralPath", valueParam.ParameterSets);
+    }
+
+    [Fact]
     public void Map_NullPayload_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => CommandMetadataMapper.Map(null!));
