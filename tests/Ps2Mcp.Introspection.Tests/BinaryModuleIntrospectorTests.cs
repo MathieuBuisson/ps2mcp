@@ -1,8 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using Ps2Mcp.Core;
 using Xunit;
@@ -84,7 +84,62 @@ public class BinaryModuleIntrospectorTests
 
         Assert.Equal("C:/modules/MyMod.dll", ex.ModulePath);
         Assert.Equal(2, ex.ExitCode);
+        Assert.Null(ex.Classifier);
         Assert.Contains("file not found", ex.StandardError);
+    }
+
+    [Fact]
+    public void Introspect_ImportFailureWithMissingAssembly_ClassifiesAndSurfacesActionableMessage()
+    {
+        var runner = new FakePwshRunner();
+        runner.OnInvoke = invocation => new PwshInvocationResult(
+            3,
+            string.Empty,
+            "Failed to import module 'C:/modules/MyMod.dll': Could not load file or assembly 'Contoso.Dependency, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null'. The system cannot find the file specified.");
+
+        var ex = Assert.Throws<BinaryModuleIntrospectionException>(() =>
+            BinaryModuleIntrospector.Introspect(
+                new BinaryModuleIntrospectionRequest("C:/modules/MyMod.dll"),
+                runner));
+
+        Assert.Equal("MissingAssembly", ex.Classifier);
+        Assert.Contains("dependent assemblies are present", ex.Message);
+    }
+
+    [Fact]
+    public void Introspect_ImportFailureWithPlatformMismatch_ClassifiesAndSurfacesActionableMessage()
+    {
+        var runner = new FakePwshRunner();
+        runner.OnInvoke = invocation => new PwshInvocationResult(
+            3,
+            string.Empty,
+            "Failed to import module 'C:/modules/MyMod.dll': Could not load file or assembly 'Contoso.WindowsOnly'. An attempt was made to load a program with an incorrect format.");
+
+        var ex = Assert.Throws<BinaryModuleIntrospectionException>(() =>
+            BinaryModuleIntrospector.Introspect(
+                new BinaryModuleIntrospectionRequest("C:/modules/MyMod.dll"),
+                runner));
+
+        Assert.Equal("PlatformMismatch", ex.Classifier);
+        Assert.Contains("Windows-only or otherwise incompatible binaries", ex.Message);
+    }
+
+    [Fact]
+    public void Introspect_ImportFailureWithoutKnownPattern_ClassifiesAsGenericImportFailure()
+    {
+        var runner = new FakePwshRunner();
+        runner.OnInvoke = invocation => new PwshInvocationResult(
+            3,
+            string.Empty,
+            "Failed to import module 'C:/modules/MyMod.dll': Module initialization failed with a custom startup error.");
+
+        var ex = Assert.Throws<BinaryModuleIntrospectionException>(() =>
+            BinaryModuleIntrospector.Introspect(
+                new BinaryModuleIntrospectionRequest("C:/modules/MyMod.dll"),
+                runner));
+
+        Assert.Equal("ImportFailure", ex.Classifier);
+        Assert.Contains("Fix the module import error and retry", ex.Message);
     }
 
     [Fact]
@@ -114,6 +169,7 @@ public class BinaryModuleIntrospectorTests
                 runner));
 
         Assert.Equal("InvalidJson", ex.Classifier);
+        Assert.IsType<JsonException>(ex.InnerException);
     }
 
     [Fact]
@@ -131,6 +187,7 @@ public class BinaryModuleIntrospectorTests
             new BinaryModuleIntrospectionRequest("C:/modules/MyMod.dll"),
             runner);
 
+        Assert.NotNull(TempFilePath);
         Assert.False(File.Exists(TempFilePath),
             "Temp script file should be removed after a successful run.");
     }
@@ -151,8 +208,33 @@ public class BinaryModuleIntrospectorTests
                 new BinaryModuleIntrospectionRequest("C:/modules/MyMod.dll"),
                 runner));
 
+        Assert.NotNull(TempFilePath);
         Assert.False(File.Exists(TempFilePath),
             "Temp script file should be removed even when pwsh exits non-zero.");
+    }
+
+    [Fact]
+    public void Introspect_TempScriptFileUsesUserOnlyPermissionsOnUnix()
+    {
+        var runner = new FakePwshRunner();
+        runner.OnInvoke = invocation =>
+        {
+            var fileIndex = Array.IndexOf(invocation.Arguments.ToArray(), "-File") + 1;
+            var scriptPath = invocation.Arguments[fileIndex];
+
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Equal(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                    File.GetUnixFileMode(scriptPath));
+            }
+
+            return new PwshInvocationResult(0, BuildValidPayload(), string.Empty);
+        };
+
+        BinaryModuleIntrospector.Introspect(
+            new BinaryModuleIntrospectionRequest("C:/modules/MyMod.dll"),
+            runner);
     }
 
     [Fact]
@@ -194,26 +276,24 @@ public class BinaryModuleIntrospectorTests
     private string? TempFilePath;
 
     private static string BuildValidPayload() =>
-        "{\"moduleName\":\"MyMod\",\"modulePath\":\"C:/modules/MyMod.dll\",\"commands\":[" +
-        "{\"name\":\"Get-Foo\",\"commandType\":\"Cmdlet\",\"supportsShouldProcess\":false," +
-        "\"supportsPaging\":false,\"supportsTransactions\":false,\"defaultParameterSetName\":\"\"," +
-        "\"helpUri\":null,\"outputType\":[],\"aliases\":[],\"parameters\":[],\"parameterSets\":[]}]}";
-}
-
-// Test double for IPwshRunner. Records each invocation and returns a canned
-// PwshInvocationResult. A similar FakePwshRunner exists in Ps2Mcp.Cli.Tests
-// (with a null-guarded OnInvoke and IDisposable); this version is a minimal
-// standalone stub to avoid cross-project test dependencies.
-internal sealed class FakePwshRunner : IPwshRunner
-{
-    public Func<PwshInvocation, PwshInvocationResult> OnInvoke { get; set; } =
-        _ => new PwshInvocationResult(0, string.Empty, string.Empty);
-
-    public List<PwshInvocation> StartCalls { get; } = new();
-
-    public PwshInvocationResult Invoke(PwshInvocation invocation)
-    {
-        StartCalls.Add(invocation);
-        return OnInvoke(invocation);
-    }
+        JsonSerializer.Serialize(
+            new BinaryIntrospectionPayload
+            {
+                ModuleName = "MyMod",
+                ModulePath = "C:/modules/MyMod.dll",
+                Commands =
+                [
+                    new BinaryCommandPayload
+                    {
+                        Name = "Get-Foo",
+                        CommandType = "Cmdlet",
+                        DefaultParameterSetName = string.Empty,
+                        OutputType = [],
+                        Aliases = [],
+                        Parameters = [],
+                        ParameterSets = [],
+                    },
+                ],
+            },
+            BinaryIntrospectionJsonSerializerContext.Default.BinaryIntrospectionPayload);
 }
