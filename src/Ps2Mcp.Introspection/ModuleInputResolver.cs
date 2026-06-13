@@ -12,16 +12,26 @@ public static class ModuleInputResolver
         {
             return ModuleInputResolution.Invalid("Module path is required.");
         }
-        if (Directory.Exists(path))
+
+        string fullPath;
+        try
         {
-            return ModuleInputResolution.Invalid($"Module path '{path}' is a directory; expected a .psd1 or .psm1 file.");
+            fullPath = Path.GetFullPath(path);
         }
-        if (!File.Exists(path))
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return ModuleInputResolution.Invalid($"Module path '{path}' does not exist.");
+            return ModuleInputResolution.Invalid($"Module path '{path}' is invalid: {ex.Message}");
         }
 
-        var fullPath = Path.GetFullPath(path);
+        if (Directory.Exists(fullPath))
+        {
+            return ModuleInputResolution.Invalid($"Module path '{fullPath}' is a directory; expected a .psd1 or .psm1 file.");
+        }
+        if (!File.Exists(fullPath))
+        {
+            return ModuleInputResolution.Invalid($"Module path '{fullPath}' does not exist.");
+        }
+
         var extension = Path.GetExtension(fullPath);
         if (!string.Equals(extension, ".psd1", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(extension, ".psm1", StringComparison.OrdinalIgnoreCase))
@@ -62,16 +72,25 @@ public static class ModuleInputResolver
         }
 
         var rootModule = rootModuleExtraction.Value;
+        var normalizedRootModule = NormalizeManifestPathSeparators(rootModule);
 
         var manifestDir = Path.GetDirectoryName(fullPath)!;
-        // RootModule is resolved relative to the manifest directory unless the value is already an absolute path.
-        var entryPointPath = Path.IsPathRooted(rootModule)
-            ? rootModule
-            : Path.GetFullPath(Path.Combine(manifestDir, rootModule));
+        var entryPointPath = Path.IsPathRooted(normalizedRootModule)
+            ? normalizedRootModule
+            : Path.GetFullPath(Path.Combine(manifestDir, normalizedRootModule));
         if (!File.Exists(entryPointPath))
         {
             return ModuleInputResolution.Invalid($"Manifest '{fullPath}' references RootModule '{rootModule}' which does not exist at '{entryPointPath}'.");
         }
+
+        var entryPointExtension = Path.GetExtension(entryPointPath);
+        if (!string.Equals(entryPointExtension, ".psm1", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(entryPointExtension, ".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return ModuleInputResolution.Invalid(
+                $"Manifest '{fullPath}' references RootModule '{rootModule}' with unsupported extension '{entryPointExtension}'; expected .psm1 or .dll.");
+        }
+
         var kind = ModuleTypeClassifier.Classify(fullPath, entryPointPath);
         return ModuleInputResolution.Resolved(
             new ResolvedModule(fullPath, entryPointPath, moduleName, kind));
@@ -108,6 +127,9 @@ public static class ModuleInputResolver
 
         return RootModuleExtraction.Missing();
     }
+
+    private static string NormalizeManifestPathSeparators(string path) =>
+        path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
 
     private static bool TryGetManifestHashtable(ScriptBlockAst ast, out HashtableAst manifestHashtable)
     {

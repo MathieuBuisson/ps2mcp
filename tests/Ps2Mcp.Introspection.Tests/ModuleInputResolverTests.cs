@@ -84,12 +84,29 @@ public sealed class ModuleInputResolverTests : IDisposable
         Assert.Equal(ModuleInputResolutionStatus.Resolved, result.Status);
         Assert.NotNull(result.Module);
         Assert.Null(result.Diagnostic);
-        Assert.Equal(Path.GetFullPath(Path.Combine(_tempDir, "MyModule.psm1")), result.Module!.EntryPointPath);
-        Assert.Equal(ModuleKind.Script, result.Module.Kind);
+        var module = result.Module!;
+        Assert.Equal(Path.GetFullPath(manifest), module.ManifestPath);
+        Assert.Equal(Path.GetFullPath(Path.Combine(_tempDir, "MyModule.psm1")), module.EntryPointPath);
+        Assert.Equal("MyModule", module.ModuleName);
+        Assert.Equal(ModuleKind.Script, module.Kind);
     }
 
     [Fact]
     public void Resolve_Psd1PathWithRelativeRootModule_ResolvesRelativeToManifestDirectory()
+    {
+        WriteFile("MyModule.psm1", "# script body");
+        var manifest = WriteManifest("RootModule = './MyModule.psm1'");
+
+        var result = ModuleInputResolver.Resolve(manifest);
+
+        Assert.Equal(ModuleInputResolutionStatus.Resolved, result.Status);
+        Assert.NotNull(result.Module);
+        Assert.Null(result.Diagnostic);
+        Assert.Equal(Path.GetFullPath(Path.Combine(_tempDir, "MyModule.psm1")), result.Module!.EntryPointPath);
+    }
+
+    [Fact]
+    public void Resolve_Psd1PathWithBackslashRelativeRootModule_ResolvesRelativeToManifestDirectory()
     {
         WriteFile("MyModule.psm1", "# script body");
         var manifest = WriteManifest("RootModule = '.\\MyModule.psm1'");
@@ -128,15 +145,41 @@ public sealed class ModuleInputResolverTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_MissingFile_ReturnsInvalid()
+    public void Resolve_Psd1PathWithUnsupportedRootModuleExtension_ReturnsInvalid()
     {
-        var path = Path.Combine(_tempDir, "DoesNotExist.psd1");
+        WriteFile("MyModule.txt", "not a supported entry point");
+        var manifest = WriteManifest("RootModule = 'MyModule.txt'");
 
-        var result = ModuleInputResolver.Resolve(path);
+        var result = ModuleInputResolver.Resolve(manifest);
 
         Assert.Equal(ModuleInputResolutionStatus.Invalid, result.Status);
         Assert.Null(result.Module);
-        Assert.Contains("does not exist", result.Diagnostic);
+        Assert.Contains("unsupported extension", result.Diagnostic);
+        Assert.Contains(".txt", result.Diagnostic);
+        Assert.Contains(manifest, result.Diagnostic);
+    }
+
+    [Fact]
+    public void Resolve_MissingFile_ReturnsInvalid()
+    {
+        var previousDirectory = Environment.CurrentDirectory;
+        Environment.CurrentDirectory = _tempDir;
+
+        try
+        {
+            var path = "DoesNotExist.psd1";
+
+            var result = ModuleInputResolver.Resolve(path);
+
+            Assert.Equal(ModuleInputResolutionStatus.Invalid, result.Status);
+            Assert.Null(result.Module);
+            Assert.Contains("does not exist", result.Diagnostic);
+            Assert.Contains(Path.GetFullPath(path), result.Diagnostic);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = previousDirectory;
+        }
     }
 
     [Fact]
