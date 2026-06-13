@@ -582,6 +582,72 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void Discover_Psd1InputWithNestedManifestKeys_DoesNotCaptureNestedReferences()
+    {
+        var manifest = WriteManifest(
+            "RootModule = 'MyModule.psm1'",
+            "PrivateData = @{",
+            "  NestedModules = @('IgnoredNested.psm1')",
+            "  FileList = @('Ignored.md')",
+            "  RequiredModules = @('Ignored.Module')",
+            "}");
+        var entryPoint = WriteFile("MyModule.psm1", "# main");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Empty(info.ManifestReferences.NestedModules);
+        Assert.Empty(info.ManifestReferences.FileList);
+        Assert.Empty(info.ManifestReferences.RequiredModules);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithHereStringsMentioningManifestKeys_DoesNotCaptureReferences()
+    {
+        var manifest = WriteManifest(
+            "RootModule = 'MyModule.psm1'",
+            "Description = @'",
+            "NestedModules = @('IgnoredNested.psm1')",
+            "FileList = @('Ignored.md')",
+            "RequiredModules = @('Ignored.Module')",
+            "'@");
+        var entryPoint = WriteFile("MyModule.psm1", "# main");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Empty(info.ManifestReferences.NestedModules);
+        Assert.Empty(info.ManifestReferences.FileList);
+        Assert.Empty(info.ManifestReferences.RequiredModules);
+    }
+
+    [Fact]
+    public void Discover_Psd1InputWithMixedRequiredModulesAndNestedHashtableNoise_PreservesSourceOrder()
+    {
+        var manifest = WriteManifest(
+            "RootModule = 'MyModule.psm1'",
+            "RequiredModules = @(",
+            "  @{",
+            "    PrivateData = @{ ModuleName = 'Ignored.Inner' }",
+            "  },",
+            "  'Pester',",
+            "  @{",
+            "    ModuleName = 'Az.Accounts'",
+            "    Description = @'",
+            "ModuleName = 'Ignored.Description'",
+            "'@",
+            "  },",
+            "  @{ ModuleName = 'PSReadLine' }",
+            ")");
+        var entryPoint = WriteFile("MyModule.psm1", "# main");
+        var resolved = MakeResolvedModule(manifest, entryPoint, "MyModule", ModuleKind.Script);
+
+        var info = ModuleDirectoryDiscovery.Discover(resolved);
+
+        Assert.Equal(new[] { "Pester", "Az.Accounts", "PSReadLine" }, info.ManifestReferences.RequiredModules);
+    }
+
+    [Fact]
     public void Discover_Psd1InputWithDoubleQuotedStringContainingSingleQuote_CapturesFullString()
     {
         // Manifest values can legitimately contain the opposite quote type; ensure the body class is disjoint.
@@ -764,6 +830,14 @@ public sealed class ModuleDirectoryDiscoveryTests : IDisposable
         var path = Path.Combine(_tempDir, fileName);
         File.WriteAllText(path, contents);
         return path;
+    }
+
+    private string WriteManifest(params string[] bodyLines)
+    {
+        var contents = string.Join(Environment.NewLine, bodyLines);
+        return WriteFile(
+            "MyModule.psd1",
+            "@{" + Environment.NewLine + contents + Environment.NewLine + "}" + Environment.NewLine);
     }
 
     private static ResolvedModule MakeResolvedModule(string manifestPath, string entryPointPath, string moduleName, ModuleKind kind) =>

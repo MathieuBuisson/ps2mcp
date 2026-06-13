@@ -1,10 +1,10 @@
 ﻿using System;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Management.Automation.Language;
 
 namespace Ps2Mcp.Introspection;
 
-public static partial class ModuleInputResolver
+public static class ModuleInputResolver
 {
     public static ModuleInputResolution Resolve(string path)
     {
@@ -34,7 +34,7 @@ public static partial class ModuleInputResolver
         if (string.Equals(extension, ".psm1", StringComparison.OrdinalIgnoreCase))
         {
             return ModuleInputResolution.Resolved(
-                new ResolvedModule(fullPath, fullPath, moduleName, ModuleKind.Script));
+                new ResolvedModule(fullPath, fullPath, moduleName, ModuleTypeClassifier.Classify(fullPath, fullPath)));
         }
 
         string manifestContents;
@@ -47,11 +47,21 @@ public static partial class ModuleInputResolver
             return ModuleInputResolution.Invalid($"Could not read manifest '{fullPath}': {ex.Message}");
         }
 
-        var rootModule = ExtractRootModule(manifestContents);
-        if (rootModule is null)
+        var rootModuleExtraction = ExtractRootModule(manifestContents, fullPath);
+        if (rootModuleExtraction.Diagnostic is not null)
+        {
+            return ModuleInputResolution.Invalid(rootModuleExtraction.Diagnostic);
+        }
+        if (!rootModuleExtraction.IsPresent)
         {
             return ModuleInputResolution.Invalid($"Manifest '{fullPath}' does not declare a RootModule.");
         }
+        if (rootModuleExtraction.Value!.Length == 0)
+        {
+            return ModuleInputResolution.Invalid($"Manifest '{fullPath}' declares an empty RootModule, which is not supported.");
+        }
+
+        var rootModule = rootModuleExtraction.Value;
 
         var manifestDir = Path.GetDirectoryName(fullPath)!;
         // RootModule is resolved relative to the manifest directory unless the value is already an absolute path.
@@ -62,27 +72,107 @@ public static partial class ModuleInputResolver
         {
             return ModuleInputResolution.Invalid($"Manifest '{fullPath}' references RootModule '{rootModule}' which does not exist at '{entryPointPath}'.");
         }
-        // A .dll RootModule is a binary module; any other extension is treated as script.
-        var kind = string.Equals(Path.GetExtension(entryPointPath), ".dll", StringComparison.OrdinalIgnoreCase)
-            ? ModuleKind.Binary
-            : ModuleKind.Script;
+        var kind = ModuleTypeClassifier.Classify(fullPath, entryPointPath);
         return ModuleInputResolution.Resolved(
             new ResolvedModule(fullPath, entryPointPath, moduleName, kind));
     }
 
-    // Matches 'RootModule = "X.psm1"' or unquoted 'RootModule = X.psm1'; unquoted form stops at whitespace or '#'.
-    private const string RootModulePattern = @"^\s*RootModule\s*=\s*(?:['""]([^'""]+)['""]|([^\s#]+))";
-
-    [GeneratedRegex(RootModulePattern, RegexOptions.IgnoreCase | RegexOptions.Multiline)]
-    private static partial Regex RootModuleRegex();
-
-    private static string? ExtractRootModule(string manifestContents)
+    private static RootModuleExtraction ExtractRootModule(string manifestContents, string manifestPath)
     {
-        var match = RootModuleRegex().Match(manifestContents);
-        if (!match.Success)
+        var ast = Parser.ParseInput(manifestContents, manifestPath, out _, out var errors);
+        if (errors.Length > 0)
         {
-            return null;
+            return RootModuleExtraction.Invalid($"Manifest '{manifestPath}' could not be parsed: {errors[0].Message}");
         }
-        return match.Groups[1].Value.Length > 0 ? match.Groups[1].Value : match.Groups[2].Value;
+
+        if (!TryGetManifestHashtable(ast, out var manifestHashtable))
+        {
+            return RootModuleExtraction.Invalid($"Manifest '{manifestPath}' is not a valid PowerShell data file.");
+        }
+
+        foreach (var keyValuePair in manifestHashtable.KeyValuePairs)
+        {
+            if (keyValuePair.Item1 is not StringConstantExpressionAst keyAst
+                || !string.Equals(keyAst.Value, "RootModule", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!TryReadScalarString(keyValuePair.Item2, out var rootModule))
+            {
+                return RootModuleExtraction.Invalid($"Manifest '{manifestPath}' declares a non-scalar RootModule value, which is not supported.");
+            }
+
+            return RootModuleExtraction.Found(rootModule);
+        }
+
+        return RootModuleExtraction.Missing();
+    }
+
+    private static bool TryGetManifestHashtable(ScriptBlockAst ast, out HashtableAst manifestHashtable)
+    {
+        if (ast.EndBlock.Statements.Count == 1
+            && ast.EndBlock.Statements[0] is PipelineAst { PipelineElements.Count: 1 } pipelineAst
+            && pipelineAst.PipelineElements[0] is CommandExpressionAst { Expression: HashtableAst hashtableAst })
+        {
+            manifestHashtable = hashtableAst;
+            return true;
+        }
+
+        manifestHashtable = null!;
+        return false;
+    }
+
+    private static bool TryReadScalarString(StatementAst valueAst, out string value)
+    {
+        if (valueAst is not PipelineAst { PipelineElements.Count: 1 } pipelineAst)
+        {
+            value = null!;
+            return false;
+        }
+
+        if (pipelineAst.PipelineElements[0] is CommandExpressionAst commandExpressionAst)
+        {
+            return TryReadStringExpression(commandExpressionAst.Expression, out value);
+        }
+
+        if (pipelineAst.PipelineElements[0] is CommandAst commandAst
+            && commandAst.CommandElements.Count == 1
+            && commandAst.GetCommandName() is { } commandName)
+        {
+            value = commandName;
+            return true;
+        }
+
+        value = null!;
+        return false;
+    }
+
+    private static bool TryReadStringExpression(ExpressionAst expressionAst, out string value)
+    {
+        switch (expressionAst)
+        {
+            case StringConstantExpressionAst stringConstantExpressionAst:
+                value = stringConstantExpressionAst.Value;
+                return true;
+            case ExpandableStringExpressionAst expandableStringExpressionAst:
+                value = expandableStringExpressionAst.Value;
+                return true;
+            case ConstantExpressionAst { Value: string stringValue }:
+                value = stringValue;
+                return true;
+            default:
+                value = null!;
+                return false;
+        }
+    }
+
+    private readonly record struct RootModuleExtraction(bool IsPresent, string? Value, string? Diagnostic)
+    {
+        public static RootModuleExtraction Missing() => new(false, null, null);
+
+        public static RootModuleExtraction Found(string value) => new(true, value, null);
+
+        public static RootModuleExtraction Invalid(string diagnostic) => new(false, null, diagnostic);
     }
 }

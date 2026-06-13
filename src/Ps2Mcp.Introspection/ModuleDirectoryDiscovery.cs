@@ -1,11 +1,12 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Management.Automation.Language;
 
 namespace Ps2Mcp.Introspection;
 
-public static partial class ModuleDirectoryDiscovery
+public static class ModuleDirectoryDiscovery
 {
     public static ModuleDirectoryInfo Discover(ResolvedModule module)
     {
@@ -57,26 +58,72 @@ public static partial class ModuleDirectoryDiscovery
                 $"Could not read manifest '{module.ManifestPath}': {ex.Message}");
         }
 
-        var nestedModules = ExtractQuotedArrayField(contents, NestedModulesRegex());
-        var fileList = ExtractQuotedArrayField(contents, FileListRegex());
-        var requiredModules = ExtractRequiredModules(contents);
+        if (!TryParseManifestData(contents, module.ManifestPath, out var manifestData))
+        {
+            return new ModuleDirectoryInfo(moduleDirectory, files, ManifestReferences.Empty, null);
+        }
+
+        var nestedModules = ExtractNormalizedPathValues(manifestData, "NestedModules");
+        var fileList = ExtractNormalizedPathValues(manifestData, "FileList");
+        var requiredModules = ExtractRequiredModules(manifestData);
         return new ModuleDirectoryInfo(moduleDirectory, files, new ManifestReferences(nestedModules, fileList, requiredModules), null);
     }
 
-    private static IReadOnlyList<string> ExtractQuotedArrayField(string manifestContents, Regex fieldRegex)
+    private static bool TryParseManifestData(string manifestContents, string manifestPath, out IDictionary manifestData)
     {
-        var match = fieldRegex.Match(manifestContents);
-        if (!match.Success) return Array.Empty<string>();
-
-        if (match.Groups[1].Success) return new[] { NormalizeManifestPath(match.Groups[1].Value) };
-        if (match.Groups[2].Success) return new[] { NormalizeManifestPath(match.Groups[2].Value) };
-
-        var body = match.Groups[3].Value;
-        var result = new List<string>();
-        foreach (Match itemMatch in QuotedStringRegex().Matches(body))
+        var ast = Parser.ParseInput(manifestContents, manifestPath, out _, out var errors);
+        if (errors.Length > 0 || !TryGetManifestHashtableAst(ast, out var manifestHashtable))
         {
-            result.Add(NormalizeManifestPath(QuotedStringValue(itemMatch)));
+            manifestData = null!;
+            return false;
         }
+
+        try
+        {
+            if (manifestHashtable.SafeGetValue() is IDictionary dictionary)
+            {
+                manifestData = dictionary;
+                return true;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        manifestData = null!;
+        return false;
+    }
+
+    private static bool TryGetManifestHashtableAst(ScriptBlockAst ast, out HashtableAst manifestHashtable)
+    {
+        if (ast.EndBlock.Statements.Count == 1
+            && ast.EndBlock.Statements[0] is PipelineAst { PipelineElements.Count: 1 } pipelineAst
+            && pipelineAst.PipelineElements[0] is CommandExpressionAst { Expression: HashtableAst hashtableAst })
+        {
+            manifestHashtable = hashtableAst;
+            return true;
+        }
+
+        manifestHashtable = null!;
+        return false;
+    }
+
+    private static IReadOnlyList<string> ExtractNormalizedPathValues(IDictionary manifestData, string key)
+    {
+        if (!TryGetCaseInsensitiveValue(manifestData, key, out var value))
+        {
+            return Array.Empty<string>();
+        }
+
+        var result = new List<string>();
+        foreach (var item in EnumerateValues(value))
+        {
+            if (item is string path)
+            {
+                result.Add(NormalizeManifestPath(path));
+            }
+        }
+
         return result;
     }
 
@@ -94,54 +141,66 @@ public static partial class ModuleDirectoryDiscovery
         return normalized;
     }
 
-    private static IReadOnlyList<string> ExtractRequiredModules(string manifestContents)
+    private static IReadOnlyList<string> ExtractRequiredModules(IDictionary manifestData)
     {
-        var match = RequiredModulesFieldRegex().Match(manifestContents);
-        if (!match.Success) return Array.Empty<string>();
-
-        if (match.Groups[1].Success) return new[] { match.Groups[1].Value };
-        if (match.Groups[2].Success) return new[] { match.Groups[2].Value };
-
-        var body = match.Groups[3].Value;
-        // Per-element parser: bare strings and hashtables (with ModuleName) both contribute, in source order; mixed arrays are valid in PowerShell.
-        var names = new List<string>();
-        foreach (Match m in RequiredModulesElementRegex().Matches(body))
+        if (!TryGetCaseInsensitiveValue(manifestData, "RequiredModules", out var value))
         {
-            if (m.Groups[1].Success || m.Groups[2].Success)
+            return Array.Empty<string>();
+        }
+
+        var names = new List<string>();
+        foreach (var item in EnumerateValues(value))
+        {
+            if (item is string moduleName)
             {
-                names.Add(QuotedStringValue(m));
+                names.Add(moduleName);
             }
-            else if (m.Groups[3].Success)
+            else if (item is IDictionary moduleSpec
+                && TryGetCaseInsensitiveValue(moduleSpec, "ModuleName", out var specModuleName)
+                && specModuleName is string specModuleNameString)
             {
-                var nameMatch = ModuleNameRegex().Match(m.Groups[3].Value);
-                if (nameMatch.Success)
-                {
-                    names.Add(QuotedStringValue(nameMatch));
-                }
+                names.Add(specModuleNameString);
             }
         }
+
         return names;
     }
 
-    // Field regexes use alternation '...' | "..." with disjoint body classes so a string containing the opposite quote type is captured correctly.
-    [GeneratedRegex(@"(?<![\w])NestedModules\s*=\s*(?:'([^']*)'|""([^""]*)""|@\(([\s\S]*?)\))", RegexOptions.IgnoreCase)]
-    private static partial Regex NestedModulesRegex();
+    private static bool TryGetCaseInsensitiveValue(IDictionary dictionary, string key, out object? value)
+    {
+        foreach (DictionaryEntry entry in dictionary)
+        {
+            if (entry.Key is string entryKey
+                && string.Equals(entryKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                value = entry.Value;
+                return true;
+            }
+        }
 
-    [GeneratedRegex(@"(?<![\w])FileList\s*=\s*(?:'([^']*)'|""([^""]*)""|@\(([\s\S]*?)\))", RegexOptions.IgnoreCase)]
-    private static partial Regex FileListRegex();
+        value = null;
+        return false;
+    }
 
-    [GeneratedRegex(@"(?<![\w])RequiredModules\s*=\s*(?:'([^']*)'|""([^""]*)""|@\(([\s\S]*?)\))", RegexOptions.IgnoreCase)]
-    private static partial Regex RequiredModulesFieldRegex();
-
-    [GeneratedRegex(@"'([^']*)'|""([^""]*)""|@\{([^{}]*)\}")]
-    private static partial Regex RequiredModulesElementRegex();
-
-    [GeneratedRegex(@"'([^']*)'|""([^""]*)""")]
-    private static partial Regex QuotedStringRegex();
-
-    [GeneratedRegex(@"ModuleName\s*=\s*(?:'([^']*)'|""([^""]*)"")", RegexOptions.IgnoreCase)]
-    private static partial Regex ModuleNameRegex();
-
-    private static string QuotedStringValue(Match match) =>
-        match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+    private static IEnumerable<object?> EnumerateValues(object? value)
+    {
+        switch (value)
+        {
+            case null:
+                yield break;
+            case string:
+            case IDictionary:
+                yield return value;
+                yield break;
+            case IEnumerable enumerable:
+                foreach (var item in enumerable)
+                {
+                    yield return item;
+                }
+                yield break;
+            default:
+                yield return value;
+                yield break;
+        }
+    }
 }

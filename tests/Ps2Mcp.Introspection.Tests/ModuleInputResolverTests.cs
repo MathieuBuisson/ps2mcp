@@ -41,7 +41,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     public void Resolve_Psd1PathWithScriptRootModule_ReturnsScriptModule()
     {
         WriteFile("MyModule.psm1", "# script body");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.psm1'" + Environment.NewLine);
+        var manifest = WriteManifest("RootModule = 'MyModule.psm1'");
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -58,22 +58,26 @@ public sealed class ModuleInputResolverTests : IDisposable
     [Fact]
     public void Resolve_Psd1PathWithBinaryRootModule_ReturnsBinaryModule()
     {
-        WriteFile("MyModule.dll", "fake-dll");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'MyModule.dll'" + Environment.NewLine);
+        var entryPointPath = WriteFile("MyModule.dll", "fake-dll");
+        var manifest = WriteManifest("RootModule = 'MyModule.dll'");
 
         var result = ModuleInputResolver.Resolve(manifest);
 
         Assert.Equal(ModuleInputResolutionStatus.Resolved, result.Status);
         Assert.NotNull(result.Module);
         Assert.Null(result.Diagnostic);
-        Assert.Equal(ModuleKind.Binary, result.Module!.Kind);
+        var module = result.Module!;
+        Assert.Equal(Path.GetFullPath(manifest), module.ManifestPath);
+        Assert.Equal(Path.GetFullPath(entryPointPath), module.EntryPointPath);
+        Assert.Equal("MyModule", module.ModuleName);
+        Assert.Equal(ModuleKind.Binary, module.Kind);
     }
 
     [Fact]
     public void Resolve_Psd1PathWithUnquotedRootModule_ReturnsScriptModule()
     {
         WriteFile("MyModule.psm1", "# script body");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = MyModule.psm1" + Environment.NewLine);
+        var manifest = WriteManifest("RootModule = MyModule.psm1");
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -88,7 +92,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     public void Resolve_Psd1PathWithRelativeRootModule_ResolvesRelativeToManifestDirectory()
     {
         WriteFile("MyModule.psm1", "# script body");
-        var manifest = WriteFile("MyModule.psd1", "RootModule = '.\\MyModule.psm1'" + Environment.NewLine);
+        var manifest = WriteManifest("RootModule = '.\\MyModule.psm1'");
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -101,7 +105,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     [Fact]
     public void Resolve_Psd1PathWithoutRootModule_ReturnsInvalid()
     {
-        var manifest = WriteFile("MyModule.psd1", "Description = 'no root module here'" + Environment.NewLine);
+        var manifest = WriteManifest("Description = 'no root module here'");
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -113,7 +117,7 @@ public sealed class ModuleInputResolverTests : IDisposable
     [Fact]
     public void Resolve_Psd1PathWithMissingRootModuleFile_ReturnsInvalid()
     {
-        var manifest = WriteFile("MyModule.psd1", "RootModule = 'DoesNotExist.psm1'" + Environment.NewLine);
+        var manifest = WriteManifest("RootModule = 'DoesNotExist.psm1'");
 
         var result = ModuleInputResolver.Resolve(manifest);
 
@@ -166,10 +170,61 @@ public sealed class ModuleInputResolverTests : IDisposable
         Assert.Null(result.Module);
     }
 
+    [Fact]
+    public void Resolve_Psd1PathWithEmptyRootModule_ReturnsInvalid()
+    {
+        var manifest = WriteManifest("RootModule = ''");
+
+        var result = ModuleInputResolver.Resolve(manifest);
+
+        Assert.Equal(ModuleInputResolutionStatus.Invalid, result.Status);
+        Assert.Null(result.Module);
+        Assert.Contains("empty RootModule", result.Diagnostic);
+        Assert.Contains(manifest, result.Diagnostic);
+    }
+
+    [Fact]
+    public void Resolve_Psd1PathWithNestedRootModuleOnly_ReturnsInvalid()
+    {
+        var manifest = WriteManifest(
+            "PrivateData = @{",
+            "  RootModule = 'Nested.psm1'",
+            "}");
+
+        var result = ModuleInputResolver.Resolve(manifest);
+
+        Assert.Equal(ModuleInputResolutionStatus.Invalid, result.Status);
+        Assert.Null(result.Module);
+        Assert.Contains("does not declare a RootModule", result.Diagnostic);
+    }
+
+    [Fact]
+    public void Resolve_Psd1PathWithHereStringMentioningRootModule_ReturnsInvalid()
+    {
+        var manifest = WriteManifest(
+            "Description = @'",
+            "RootModule = 'Ignored.psm1'",
+            "'@");
+
+        var result = ModuleInputResolver.Resolve(manifest);
+
+        Assert.Equal(ModuleInputResolutionStatus.Invalid, result.Status);
+        Assert.Null(result.Module);
+        Assert.Contains("does not declare a RootModule", result.Diagnostic);
+    }
+
     private string WriteFile(string fileName, string contents)
     {
         var path = Path.Combine(_tempDir, fileName);
         File.WriteAllText(path, contents);
         return path;
+    }
+
+    private string WriteManifest(params string[] bodyLines)
+    {
+        var contents = string.Join(Environment.NewLine, bodyLines);
+        return WriteFile(
+            "MyModule.psd1",
+            "@{" + Environment.NewLine + contents + Environment.NewLine + "}" + Environment.NewLine);
     }
 }
