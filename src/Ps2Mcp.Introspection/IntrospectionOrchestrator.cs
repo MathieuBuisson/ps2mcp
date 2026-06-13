@@ -1,6 +1,6 @@
 ﻿using System;
-using System.Linq;
 using System.Collections.Immutable;
+using System.Linq;
 using Ps2Mcp.Core;
 
 namespace Ps2Mcp.Introspection;

@@ -8,4 +8,12 @@
     <ProjectReference Include="..\..\src\Ps2Mcp.Introspection\Ps2Mcp.Introspection.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Fixtures\binary-metadata-microsoft-powershell-management.json"
+                      LogicalName="Ps2Mcp.Introspection.Tests.Fixtures.BinaryMetadataMicrosoftPowerShellManagement.json" />
+    <EmbeddedResource Include="..\fixtures\modules\DiverseParamsModule\DiverseParamsModule.psm1"
+                      Link="EmbeddedFixtures\DiverseParamsModule.psm1"
+                      LogicalName="Ps2Mcp.Introspection.Tests.Fixtures.DiverseParamsModule.psm1" />
+  </ItemGroup>
+
 </Project>

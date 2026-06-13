@@ -43,8 +43,10 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     public void Introspect_ProducesOneToolPerTopLevelFunction()
     {
         var path = WritePsm1("TestModule.psm1",
-            "function Get-Foo { [CmdletBinding()] param() }" + Environment.NewLine +
-            "function Set-Bar { [CmdletBinding()] param() }" + Environment.NewLine);
+            """
+            function Get-Foo { [CmdletBinding()] param() }
+            function Set-Bar { [CmdletBinding()] param() }
+            """);
 
         var result = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path));
 
@@ -69,16 +71,18 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     public void Introspect_ToolDescriptionFromHelpSynopsis()
     {
         var path = WritePsm1("TestModule.psm1",
-            "function Get-Foo {" + Environment.NewLine +
-            "<#" + Environment.NewLine +
-            ".SYNOPSIS" + Environment.NewLine +
-            "Gets a foo." + Environment.NewLine +
-            ".DESCRIPTION" + Environment.NewLine +
-            "Returns a foo object." + Environment.NewLine +
-            "#>" + Environment.NewLine +
-            "[CmdletBinding()]" + Environment.NewLine +
-            "param()" + Environment.NewLine +
-            "}" + Environment.NewLine);
+            """
+            function Get-Foo {
+            <#
+            .SYNOPSIS
+            Gets a foo.
+            .DESCRIPTION
+            Returns a foo object.
+            #>
+            [CmdletBinding()]
+            param()
+            }
+            """);
 
         var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
 
@@ -89,14 +93,16 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     public void Introspect_ToolDescriptionFallsBackToHelpDescriptionWhenSynopsisAbsent()
     {
         var path = WritePsm1("TestModule.psm1",
-            "function Get-Foo {" + Environment.NewLine +
-            "<#" + Environment.NewLine +
-            ".DESCRIPTION" + Environment.NewLine +
-            "Returns a foo object." + Environment.NewLine +
-            "#>" + Environment.NewLine +
-            "[CmdletBinding()]" + Environment.NewLine +
-            "param()" + Environment.NewLine +
-            "}" + Environment.NewLine);
+            """
+            function Get-Foo {
+            <#
+            .DESCRIPTION
+            Returns a foo object.
+            #>
+            [CmdletBinding()]
+            param()
+            }
+            """);
 
         var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
 
@@ -106,11 +112,13 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     [Fact]
     public void Introspect_ToolCapturesDiverseParameterShapes()
     {
-        // Fixture content (tests/fixtures/modules/DiverseParamsModule/DiverseParamsModule.psm1):
+        // Fixture content is embedded in the test assembly and materialized to a temp .psm1 here:
         // 2 functions covering all 8 required parameter shapes — mandatory, optional, enum
         // (ValidateSet), range (ValidateRange), pattern (ValidatePattern), array, switch, and
         // secure-string. See ParameterShapeCoverage below for the per-parameter expectations.
-        var path = LocateFixture("DiverseParamsModule.psm1");
+        var path = WriteFixture(
+            "DiverseParamsModule.psm1",
+            FixtureResourceLoader.LoadUtf8Text(FixtureResourceLoader.DiverseParamsModule));
 
         var result = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path));
         Assert.Equal("DiverseParamsModule", result.Module.Name);
@@ -160,6 +168,13 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
         Assert.Null(environmentSchema.Maximum);
         Assert.Null(environmentSchema.Pattern);
 
+        var tagsSchema = getServer.Schema.Properties.Single(p => p.Name == "Tags");
+        Assert.Equal("array", tagsSchema.Type);
+        Assert.NotNull(tagsSchema.Schema);
+        Assert.Equal("array", tagsSchema.Schema!.Type);
+        Assert.NotNull(tagsSchema.Schema.Items);
+        Assert.Equal("string", tagsSchema.Schema.Items!.Type);
+
         // -- Set-Config: mandatory, range, optional, pattern, switch, secure-string --
         Assert.Equal(4, setConfig.Parameters.Length);
 
@@ -184,6 +199,7 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
 
         // Set-Config schema: ValidateRange and ValidatePattern flow into Minimum/Maximum/Pattern.
         var maxRetriesSchema = setConfig.Schema.Properties.Single(p => p.Name == "MaxRetries");
+        Assert.Equal("integer", maxRetriesSchema.Type);
         Assert.Equal("1", maxRetriesSchema.Minimum);
         Assert.Equal("100", maxRetriesSchema.Maximum);
         Assert.Null(maxRetriesSchema.Enum);
@@ -194,6 +210,9 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
         Assert.Null(prefixSchema.Enum);
         Assert.Null(prefixSchema.Minimum);
         Assert.Null(prefixSchema.Maximum);
+
+        var forceSchema = setConfig.Schema.Properties.Single(p => p.Name == "Force");
+        Assert.Equal("boolean", forceSchema.Type);
 
         var passwordSchema = setConfig.Schema.Properties.Single(p => p.Name == "Password");
         Assert.Equal("SecureString", passwordSchema.Type);
@@ -231,16 +250,55 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     public void Introspect_ToolCapturesOutputTypeAttribute()
     {
         var path = WritePsm1("TestModule.psm1",
-            "function Get-Foo {" + Environment.NewLine +
-            "[CmdletBinding()]" + Environment.NewLine +
-            "[OutputType('FooResult')]" + Environment.NewLine +
-            "param()" + Environment.NewLine +
-            "}" + Environment.NewLine);
+            """
+            function Get-Foo {
+            [CmdletBinding()]
+            [OutputType('FooResult')]
+            param()
+            }
+            """);
 
         var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
 
         Assert.NotNull(tool.Output);
         Assert.Equal("FooResult", tool.Output!.OutputTypeName);
+    }
+
+    [Fact]
+    public void Introspect_ToolCapturesOutputTypeAttributeNamedTypeNameArgument()
+    {
+        var path = WritePsm1("TestModule.psm1",
+            """
+            function Get-Foo {
+            [CmdletBinding()]
+            [OutputType(TypeName = 'FooResult')]
+            param()
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+
+        Assert.NotNull(tool.Output);
+        Assert.Equal("FooResult", tool.Output!.OutputTypeName);
+    }
+
+    [Fact]
+    public void Introspect_MultipleOutputTypeAttributes_PreservesFirstDeclaredType()
+    {
+        var path = WritePsm1("TestModule.psm1",
+            """
+            function Get-Foo {
+            [CmdletBinding()]
+            [OutputType('FirstResult')]
+            [OutputType(TypeName = 'SecondResult')]
+            param()
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+
+        Assert.NotNull(tool.Output);
+        Assert.Equal("FirstResult", tool.Output!.OutputTypeName);
     }
 
     [Fact]
@@ -258,16 +316,18 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     public void Introspect_ToolCapturesHelpExamples()
     {
         var path = WritePsm1("TestModule.psm1",
-            "function Get-Foo {" + Environment.NewLine +
-            "<#" + Environment.NewLine +
-            ".SYNOPSIS" + Environment.NewLine +
-            "Gets a foo." + Environment.NewLine +
-            ".EXAMPLE" + Environment.NewLine +
-            "Get-Foo -Name 'bar'" + Environment.NewLine +
-            "#>" + Environment.NewLine +
-            "[CmdletBinding()]" + Environment.NewLine +
-            "param([string]$Name)" + Environment.NewLine +
-            "}" + Environment.NewLine);
+            """
+            function Get-Foo {
+            <#
+            .SYNOPSIS
+            Gets a foo.
+            .EXAMPLE
+            Get-Foo -Name 'bar'
+            #>
+            [CmdletBinding()]
+            param([string]$Name)
+            }
+            """);
 
         var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
 
@@ -282,11 +342,13 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
     {
         // Inner is a private closure inside Outer; only the top-level Outer should be exposed.
         var path = WritePsm1("TestModule.psm1",
-            "function Outer {" + Environment.NewLine +
-            "[CmdletBinding()]" + Environment.NewLine +
-            "param()" + Environment.NewLine +
-            "function Inner { 'x' }" + Environment.NewLine +
-            "}" + Environment.NewLine);
+            """
+            function Outer {
+            [CmdletBinding()]
+            param()
+            function Inner { 'x' }
+            }
+            """);
 
         var result = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path));
 
@@ -400,17 +462,10 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
         return path;
     }
 
-    // AppContext.BaseDirectory → tests/Ps2Mcp.Introspection.Tests/bin/Debug/net10.0/
-    // Walking up four levels lands at tests/, then into fixtures/modules/<fileName>.
-    private static string LocateFixture(string fileName)
+    private string WriteFixture(string fileName, string content)
     {
-        var baseDir = AppContext.BaseDirectory;
-        var testsRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", ".."));
-        var fixturePath = Path.Combine(testsRoot, "fixtures", "modules", "DiverseParamsModule", fileName);
-        if (!File.Exists(fixturePath))
-        {
-            throw new FileNotFoundException($"Fixture not found: {fixturePath}");
-        }
-        return fixturePath;
+        var path = Path.Combine(_tempDir, fileName);
+        File.WriteAllText(path, content);
+        return path;
     }
 }

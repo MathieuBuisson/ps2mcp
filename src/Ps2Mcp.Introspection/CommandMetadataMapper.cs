@@ -2,8 +2,6 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Ps2Mcp.Core;
 
 namespace Ps2Mcp.Introspection;
@@ -20,7 +18,6 @@ namespace Ps2Mcp.Introspection;
 internal static class CommandMetadataMapper
 {
     private const int DefaultSerializationDepth = 4;
-
     // Map(BinaryIntrospectionPayload) → McpServerDefinition.
     // The version field is not part of the binary payload (PowerShell does not
     // surface the module's manifest version via Get-Command's metadata), so the
@@ -55,7 +52,7 @@ internal static class CommandMetadataMapper
             Parameters: parameters,
             RequiredParameterSet: requiredSet,
             Schema: schema,
-            Execution: new ExecutionDefinition(DefaultSerializationDepth),
+            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
             Help: null,
             Output: output);
     }
@@ -63,7 +60,7 @@ internal static class CommandMetadataMapper
     private static ParameterDefinition MapParameter(BinaryParameterPayload parameter)
     {
         var humanizedType = TypeNameHumanizer.Humanize(parameter.Type);
-        var isSecure = IsSecureType(humanizedType);
+        var isSecure = PowerShellTypeMapper.IsSecureType(humanizedType);
         var aliases = parameter.Aliases is { Count: > 0 }
             ? parameter.Aliases.ToImmutableArray()
             : ImmutableArray<string>.Empty;
@@ -96,14 +93,15 @@ internal static class CommandMetadataMapper
         var requiredBuilder = ImmutableArray.CreateBuilder<string>(parameters.Length);
         foreach (var def in parameters)
         {
+            var mappedType = PowerShellTypeMapper.Map(def.Type);
             propertyBuilder.Add(new SchemaProperty(
                 Name: def.Name,
-                Type: def.Type,
+                Type: mappedType.Type,
                 Enum: null,
                 Minimum: null,
                 Maximum: null,
                 Pattern: null,
-                Schema: null));
+                Schema: mappedType.Schema));
             if (def.IsMandatory)
             {
                 requiredBuilder.Add(def.Name);
@@ -131,10 +129,4 @@ internal static class CommandMetadataMapper
         return new OutputMetadata(outputType[0], OutputTypeArguments: null);
     }
 
-    // Mirrors ScriptModuleIntrospector.IsSecureType: PowerShell type names are
-    // case-insensitive, and the humanizer preserves the author-supplied casing.
-    // Both SecureString and PSCredential are recognized as secure types.
-    private static bool IsSecureType(string type) =>
-        string.Equals(type, "SecureString", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(type, "PSCredential", StringComparison.OrdinalIgnoreCase);
 }

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.IO;
 using System.Linq;
 using Ps2Mcp.Core;
 using Xunit;
@@ -15,6 +14,8 @@ namespace Ps2Mcp.Introspection.Tests;
 // (e.g. Microsoft.PowerShell.Management).
 public class CommandMetadataMapperTests
 {
+    private static readonly Lazy<BinaryIntrospectionPayload> RealFixture = new(LoadFixtureCore);
+
     [Fact]
     public void Map_RealMicrosoftPowerShellManagementPayload_ProducesServerDefinition()
     {
@@ -160,26 +161,39 @@ public class CommandMetadataMapperTests
     }
 
     [Fact]
-    public void Map_RealPayload_MutuallyExclusiveParametersHaveDistinctParameterSets()
+    public void Map_SyntheticPayload_MutuallyExclusiveParametersHaveDistinctParameterSets()
     {
-        // Add-Content has mutually exclusive Path and LiteralPath parameter sets.
-        // The mapper must preserve per-parameter set membership, not copy the full
-        // command-level set list into every parameter.
-        var payload = LoadFixture();
+        var payload = new BinaryIntrospectionPayload
+        {
+            ModuleName = "Sets",
+            ModulePath = "n/a",
+            Commands = new List<BinaryCommandPayload>
+            {
+                new()
+                {
+                    Name = "Add-Thing",
+                    DefaultParameterSetName = "Path",
+                    Parameters = new List<BinaryParameterPayload>
+                    {
+                        new() { Name = "Path", Type = "System.String[]", ParameterSets = new List<string> { "Path" } },
+                        new() { Name = "LiteralPath", Type = "System.String[]", ParameterSets = new List<string> { "LiteralPath" } },
+                        new() { Name = "Value", Type = "System.String", ParameterSets = new List<string> { "Path", "LiteralPath" } },
+                    },
+                },
+            },
+        };
 
         var result = CommandMetadataMapper.Map(payload);
-        var addContent = result.Tools.Single(t => t.ToolName == "Add-Content");
-        var pathParam = addContent.Parameters.Single(p => p.Name == "Path");
-        var literalParam = addContent.Parameters.Single(p => p.Name == "LiteralPath");
+        var addThing = Assert.Single(result.Tools);
+        var pathParam = addThing.Parameters.Single(p => p.Name == "Path");
+        var literalParam = addThing.Parameters.Single(p => p.Name == "LiteralPath");
 
-        // Path belongs to the Path set; LiteralPath belongs to the LiteralPath set.
         Assert.Contains("Path", pathParam.ParameterSets);
         Assert.DoesNotContain("LiteralPath", pathParam.ParameterSets);
         Assert.Contains("LiteralPath", literalParam.ParameterSets);
         Assert.DoesNotContain("Path", literalParam.ParameterSets);
 
-        // Value (a common parameter) belongs to both sets.
-        var valueParam = addContent.Parameters.Single(p => p.Name == "Value");
+        var valueParam = addThing.Parameters.Single(p => p.Name == "Value");
         Assert.Contains("Path", valueParam.ParameterSets);
         Assert.Contains("LiteralPath", valueParam.ParameterSets);
     }
@@ -234,6 +248,77 @@ public class CommandMetadataMapperTests
     }
 
     [Fact]
+    public void Map_SyntheticPayload_NullParameterTypeFallsBackToObject()
+    {
+        var payload = new BinaryIntrospectionPayload
+        {
+            ModuleName = "NullType",
+            ModulePath = "n/a",
+            Commands = new List<BinaryCommandPayload>
+            {
+                new()
+                {
+                    Name = "Get-Foo",
+                    Parameters = new List<BinaryParameterPayload>
+                    {
+                        new() { Name = "Value", Type = null! },
+                    },
+                },
+            },
+        };
+
+        var result = CommandMetadataMapper.Map(payload);
+        var parameter = Assert.Single(result.Tools[0].Parameters);
+        var property = Assert.Single(result.Tools[0].Schema.Properties);
+
+        Assert.Equal("object", parameter.Type);
+        Assert.False(parameter.IsSecure);
+        Assert.Equal("object", property.Type);
+        Assert.Null(property.Schema);
+    }
+
+    [Fact]
+    public void Map_SyntheticPayload_SchemaTypesUseJsonSchemaMappings()
+    {
+        var payload = new BinaryIntrospectionPayload
+        {
+            ModuleName = "Shapes",
+            ModulePath = "n/a",
+            Commands = new List<BinaryCommandPayload>
+            {
+                new()
+                {
+                    Name = "Get-Shapes",
+                    Parameters = new List<BinaryParameterPayload>
+                    {
+                        new() { Name = "Name", Type = "System.String" },
+                        new() { Name = "Count", Type = "System.Int32" },
+                        new() { Name = "Ratio", Type = "System.Double" },
+                        new() { Name = "Enabled", Type = "System.Boolean" },
+                        new() { Name = "Force", Type = "System.Management.Automation.SwitchParameter" },
+                        new() { Name = "Tags", Type = "System.String[]" },
+                    },
+                },
+            },
+        };
+
+        var result = CommandMetadataMapper.Map(payload);
+        var schema = result.Tools[0].Schema;
+
+        Assert.Equal("string", schema.Properties.Single(p => p.Name == "Name").Type);
+        Assert.Equal("integer", schema.Properties.Single(p => p.Name == "Count").Type);
+        Assert.Equal("number", schema.Properties.Single(p => p.Name == "Ratio").Type);
+        Assert.Equal("boolean", schema.Properties.Single(p => p.Name == "Enabled").Type);
+        Assert.Equal("boolean", schema.Properties.Single(p => p.Name == "Force").Type);
+
+        var tags = schema.Properties.Single(p => p.Name == "Tags");
+        Assert.Equal("array", tags.Type);
+        Assert.NotNull(tags.Schema);
+        Assert.NotNull(tags.Schema!.Items);
+        Assert.Equal("string", tags.Schema.Items!.Type);
+    }
+
+    [Fact]
     public void Map_SyntheticPayload_OutputTypeFirstStringMapped()
     {
         var payload = new BinaryIntrospectionPayload
@@ -281,24 +366,12 @@ public class CommandMetadataMapperTests
         Assert.Null(result.Tools[0].Output);
     }
 
-    private static BinaryIntrospectionPayload LoadFixture()
-    {
-        var path = LocateFixture("binary-metadata-microsoft-powershell-management.json");
-        var bytes = File.ReadAllBytes(path);
-        return BinaryIntrospectionPayloadSerializer.Deserialize(bytes);
-    }
+    private static BinaryIntrospectionPayload LoadFixture() => RealFixture.Value;
 
-    // AppContext.BaseDirectory → tests/Ps2Mcp.Introspection.Tests/bin/Debug/net10.0/
-    // Walking up four levels lands at tests/, then into Ps2Mcp.Introspection.Tests/Fixtures/<fileName>.
-    private static string LocateFixture(string fileName)
+    private static BinaryIntrospectionPayload LoadFixtureCore()
     {
-        var baseDir = AppContext.BaseDirectory;
-        var testsRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", ".."));
-        var fixturePath = Path.Combine(testsRoot, "Ps2Mcp.Introspection.Tests", "Fixtures", fileName);
-        if (!File.Exists(fixturePath))
-        {
-            throw new FileNotFoundException($"Fixture not found: {fixturePath}");
-        }
-        return fixturePath;
+        var bytes = FixtureResourceLoader.LoadBytes(
+            FixtureResourceLoader.BinaryMetadataMicrosoftPowerShellManagement);
+        return BinaryIntrospectionPayloadSerializer.Deserialize(bytes);
     }
 }

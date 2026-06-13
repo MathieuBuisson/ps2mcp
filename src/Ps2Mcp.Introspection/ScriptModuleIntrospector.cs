@@ -39,7 +39,6 @@ namespace Ps2Mcp.Introspection;
 /// </remarks>
 public static class ScriptModuleIntrospector
 {
-    private const int DefaultSerializationDepth = 4;
 
     /// <summary>
     /// Builds a <see cref="McpServerDefinition"/> from a parsed script module AST.
@@ -87,7 +86,7 @@ public static class ScriptModuleIntrospector
             Parameters: parameters,
             RequiredParameterSet: null,
             Schema: schema,
-            Execution: new ExecutionDefinition(DefaultSerializationDepth),
+            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
             Help: help is null ? null : ToHelpMetadata(help),
             Output: output);
     }
@@ -129,7 +128,7 @@ public static class ScriptModuleIntrospector
                 description = helpEntry.Description;
             }
             var defaultValue = ExtractDefaultValue(parameter);
-            var isSecure = IsSecureType(attributes.Type);
+            var isSecure = PowerShellTypeMapper.IsSecureType(attributes.Type);
 
             var definition = new ParameterDefinition(
                 Name: name,
@@ -178,14 +177,6 @@ public static class ScriptModuleIntrospector
         };
     }
 
-    // PowerShell type names are case-insensitive at the language level: [securestring],
-    // [SecureString], and [SECURESTRING] all resolve to the same CLR type. The extractor
-    // preserves the author's casing in Type (per the IR contract), so this check must
-    // compare case-insensitively or it will silently miss valid declarations.
-    private static bool IsSecureType(string type) =>
-        string.Equals(type, "SecureString", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(type, "PSCredential", StringComparison.OrdinalIgnoreCase);
-
     private static SchemaDefinition BuildSchema(ImmutableArray<ParameterExtraction> extractions)
     {
         if (extractions.IsDefaultOrEmpty)
@@ -203,14 +194,15 @@ public static class ScriptModuleIntrospector
         {
             var def = extraction.Definition;
             var attrs = extraction.Attributes;
+            var mappedType = PowerShellTypeMapper.Map(def.Type);
             propertyBuilder.Add(new SchemaProperty(
                 Name: def.Name,
-                Type: def.Type,
+                Type: mappedType.Type,
                 Enum: attrs.HasValidateSet ? attrs.ValidateSetValues : null,
                 Minimum: attrs.ValidateRangeMin,
                 Maximum: attrs.ValidateRangeMax,
                 Pattern: attrs.HasValidatePattern ? attrs.ValidatePattern : null,
-                Schema: null));
+                Schema: mappedType.Schema));
             if (def.IsMandatory)
             {
                 requiredBuilder.Add(def.Name);
@@ -232,13 +224,9 @@ public static class ScriptModuleIntrospector
             return null;
         }
 
-        if (outputTypeAttr.PositionalArguments is null ||
-            outputTypeAttr.PositionalArguments.Count == 0)
-        {
-            return null;
-        }
-
-        var typeName = ExtractOutputTypeName(outputTypeAttr.PositionalArguments[0]);
+        // The IR currently carries a single output type, so only the first declared
+        // [OutputType] in source order is preserved here.
+        var typeName = ExtractOutputTypeName(outputTypeAttr);
         return typeName is null ? null : new OutputMetadata(typeName, OutputTypeArguments: null);
     }
 
@@ -261,6 +249,7 @@ public static class ScriptModuleIntrospector
             ParameterAttributeExtractor.IsAttributeNamed(attr, "OutputType"),
             searchNestedScriptBlocks: false)
             .Cast<AttributeAst>()
+            .OrderBy(static attr => attr.Extent.StartOffset)
             .FirstOrDefault();
     }
 
@@ -271,6 +260,20 @@ public static class ScriptModuleIntrospector
             TypeExpressionAst typeExpr when typeExpr.TypeName is not null => typeExpr.TypeName.Name,
             _ => null,
         };
+
+    private static string? ExtractOutputTypeName(AttributeAst outputTypeAttr)
+    {
+        if (outputTypeAttr.PositionalArguments is { Count: > 0 })
+        {
+            return ExtractOutputTypeName(outputTypeAttr.PositionalArguments[0]);
+        }
+
+        var namedTypeName = outputTypeAttr.NamedArguments?
+            .FirstOrDefault(static arg =>
+                string.Equals(arg.ArgumentName, "TypeName", StringComparison.OrdinalIgnoreCase));
+
+        return namedTypeName is null ? null : ExtractOutputTypeName(namedTypeName.Argument);
+    }
 
     private static HelpMetadata ToHelpMetadata(CommandHelpInfo help)
     {
