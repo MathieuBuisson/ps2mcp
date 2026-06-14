@@ -38,6 +38,7 @@ public sealed class PowerShellTypeMapperTests
         var result = PowerShellTypeMapper.Map(powerShellType);
 
         Assert.Equal(expectedSchemaType, result.Type);
+        Assert.Null(result.ComplexType);
         Assert.Null(result.Schema);
     }
 
@@ -47,6 +48,7 @@ public sealed class PowerShellTypeMapperTests
         var result = PowerShellTypeMapper.Map("System.String[]");
 
         Assert.Equal("array", result.Type);
+        Assert.Null(result.ComplexType);
         Assert.NotNull(result.Schema);
         Assert.Equal("array", result.Schema!.Type);
         Assert.NotNull(result.Schema.Items);
@@ -56,23 +58,26 @@ public sealed class PowerShellTypeMapperTests
     }
 
     [Fact]
-    public void Map_UnknownType_PreservesHumanizedTypeUntilFallbackPhase()
+    public void Map_UnknownType_FallsBackToObjectWithComplexTypeMarker()
     {
         var result = PowerShellTypeMapper.Map("System.ServiceProcess.ServiceController");
 
-        Assert.Equal("ServiceController", result.Type);
+        Assert.Equal("object", result.Type);
+        Assert.Equal("ServiceController", result.ComplexType);
         Assert.Null(result.Schema);
     }
 
     [Fact]
-    public void Map_ArrayOfUnknownType_PreservesHumanizedItemTypeUntilFallbackPhase()
+    public void Map_ArrayOfUnknownType_FallsBackToObjectWithComplexTypeOnItemSchema()
     {
         var result = PowerShellTypeMapper.Map("System.ServiceProcess.ServiceController[]");
 
         Assert.Equal("array", result.Type);
+        Assert.Null(result.ComplexType);
         Assert.NotNull(result.Schema);
         Assert.NotNull(result.Schema!.Items);
-        Assert.Equal("ServiceController", result.Schema.Items!.Type);
+        Assert.Equal("object", result.Schema.Items!.Type);
+        Assert.Equal("ServiceController", result.Schema.Items!.ComplexType);
     }
 
     [Theory]
@@ -90,5 +95,97 @@ public sealed class PowerShellTypeMapperTests
         var result = PowerShellTypeMapper.IsSecureType(powerShellType);
 
         Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("string")]
+    [InlineData("int")]
+    [InlineData("bool")]
+    [InlineData("double")]
+    [InlineData("System.String")]
+    [InlineData("System.Int32")]
+    [InlineData("System.Boolean")]
+    [InlineData("System.Double")]
+    public void Map_KnownPrimitive_HasNoComplexType(string powerShellType)
+    {
+        var result = PowerShellTypeMapper.Map(powerShellType);
+
+        Assert.Null(result.ComplexType);
+    }
+
+    [Fact]
+    public void Map_ExplicitObjectType_HasNoComplexType()
+    {
+        var result = PowerShellTypeMapper.Map("object");
+
+        Assert.Equal("object", result.Type);
+        Assert.Null(result.ComplexType);
+        Assert.Null(result.Schema);
+    }
+
+    [Theory]
+    [InlineData("Object")]
+    [InlineData("OBJECT")]
+    [InlineData("System.Object")]
+    public void Map_CapitalizedObject_HasNoComplexType(string powerShellType)
+    {
+        var result = PowerShellTypeMapper.Map(powerShellType);
+
+        Assert.Equal("object", result.Type);
+        Assert.Null(result.ComplexType);
+    }
+
+    [Fact]
+    public void Map_NullableComplexType_FallsBackToObject()
+    {
+        var result = PowerShellTypeMapper.Map("System.Nullable[System.ServiceProcess.ServiceController]");
+
+        Assert.Equal("object", result.Type);
+        Assert.Equal("Nullable[ServiceController]", result.ComplexType);
+    }
+
+    [Fact]
+    public void Map_NestedArrayOfComplexType_PreservesComplexTypeOnDeepestItem()
+    {
+        var result = PowerShellTypeMapper.Map("System.ServiceProcess.ServiceController[][]");
+
+        Assert.Equal("array", result.Type);
+        Assert.NotNull(result.Schema);
+        Assert.Equal("array", result.Schema!.Type);
+        Assert.NotNull(result.Schema.Items);
+        Assert.Equal("array", result.Schema.Items!.Type);
+        Assert.NotNull(result.Schema.Items.Items);
+        Assert.Equal("object", result.Schema.Items.Items!.Type);
+        Assert.Equal("ServiceController", result.Schema.Items.Items!.ComplexType);
+    }
+
+    [Fact]
+    public void Map_ScalarComplexType_HasNullSchema()
+    {
+        var result = PowerShellTypeMapper.Map("MyApp.CustomType");
+
+        Assert.Equal("object", result.Type);
+        Assert.Equal("MyApp.CustomType", result.ComplexType);
+        Assert.Null(result.Schema);
+    }
+
+    [Fact]
+    public void Map_ToSchemaDefinition_SetsComplexTypeOnSchema()
+    {
+        var mapping = PowerShellTypeMapper.Map("System.ServiceProcess.ServiceController");
+        var schema = mapping.ToSchemaDefinition();
+
+        Assert.Equal("object", schema.Type);
+        Assert.Equal("ServiceController", schema.ComplexType);
+    }
+
+    [Fact]
+    public void Map_PrimitiveToSchemaDefinition_HasNullComplexType()
+    {
+        var mapping = PowerShellTypeMapper.Map("int");
+        var schema = mapping.ToSchemaDefinition();
+
+        Assert.Equal("integer", schema.Type);
+        Assert.Null(schema.ComplexType);
     }
 }

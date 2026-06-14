@@ -16,6 +16,7 @@ internal static class PowerShellTypeMapper
 
             return new PowerShellTypeMapping(
                 Type: "array",
+                ComplexType: null,
                 Schema: new SchemaDefinition(
                     Type: "array",
                     Properties: ImmutableArray<SchemaProperty>.Empty,
@@ -23,7 +24,14 @@ internal static class PowerShellTypeMapper
                     Items: itemMapping.ToSchemaDefinition()));
         }
 
-        return new PowerShellTypeMapping(MapScalarType(normalizedType), Schema: null);
+        var mappedType = MapScalarType(normalizedType);
+        var isComplex = string.Equals(mappedType, "object", StringComparison.Ordinal)
+            && !string.Equals(normalizedType, "object", StringComparison.OrdinalIgnoreCase);
+
+        return new PowerShellTypeMapping(
+            Type: mappedType,
+            ComplexType: isComplex ? normalizedType : null,
+            Schema: null);
     }
 
     public static bool IsSecureType(string powerShellType)
@@ -43,7 +51,8 @@ internal static class PowerShellTypeMapper
         "long" or "int64" or "ulong" or "uint64" => "integer",
         "double" or "decimal" or "float" or "single" => "number",
         "bool" or "boolean" or "switch" or "switchparameter" => "boolean",
-        _ => powerShellType,
+        "object" => "object",
+        _ => "object",
     };
 
     private static string NormalizeTypeName(string powerShellType)
@@ -56,11 +65,13 @@ internal static class PowerShellTypeMapper
 
 internal readonly record struct PowerShellTypeMapping(
     string Type,
+    string? ComplexType,
     SchemaDefinition? Schema)
 {
     public SchemaDefinition ToSchemaDefinition() => Schema ?? new SchemaDefinition(
         Type,
         Properties: ImmutableArray<SchemaProperty>.Empty,
         Required: ImmutableArray<string>.Empty,
-        Items: null);
+        Items: null,
+        ComplexType: ComplexType);
 }

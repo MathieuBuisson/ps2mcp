@@ -8,7 +8,8 @@ public sealed record SchemaDefinition(
     string Type,
     ImmutableArray<SchemaProperty> Properties,
     ImmutableArray<string> Required,
-    SchemaDefinition? Items)
+    SchemaDefinition? Items,
+    string? ComplexType = null)
 {
     public bool Equals(SchemaDefinition? other)
     {
@@ -17,7 +18,8 @@ public sealed record SchemaDefinition(
         return Type == other.Type
             && SequenceEqualityHelpers.SequenceEqual(Properties, other.Properties)
             && SequenceEqualityHelpers.SequenceEqual(Required, other.Required)
-            && Items == other.Items;
+            && Items == other.Items
+            && ComplexType == other.ComplexType;
     }
 
     public override int GetHashCode()
@@ -27,6 +29,7 @@ public sealed record SchemaDefinition(
         SequenceEqualityHelpers.AddToHash(ref hash, Properties);
         SequenceEqualityHelpers.AddToHash(ref hash, Required);
         hash.Add(Items);
+        hash.Add(ComplexType);
         return hash.ToHashCode();
     }
 }

@@ -17,7 +17,6 @@ namespace Ps2Mcp.Introspection;
 // mapper takes the partial output and produces the full JSON-Schema-typed shape.
 internal static class CommandMetadataMapper
 {
-    private const int DefaultSerializationDepth = 4;
     // Map(BinaryIntrospectionPayload) → McpServerDefinition.
     // The version field is not part of the binary payload (PowerShell does not
     // surface the module's manifest version via Get-Command's metadata), so the
@@ -39,7 +38,7 @@ internal static class CommandMetadataMapper
         var parameters = command.Parameters
             .Select(MapParameter)
             .ToImmutableArray();
-        var schema = BuildSchema(parameters);
+        var schema = SchemaBuilder.FromParameters(parameters);
         var output = MapOutput(command.OutputType);
         var requiredSet = string.IsNullOrEmpty(command.DefaultParameterSetName)
             ? null
@@ -78,55 +77,18 @@ internal static class CommandMetadataMapper
             ParameterSets: parameterSets);
     }
 
-    private static SchemaDefinition BuildSchema(ImmutableArray<ParameterDefinition> parameters)
-    {
-        if (parameters.IsDefaultOrEmpty)
-        {
-            return new SchemaDefinition(
-                Type: "object",
-                Properties: ImmutableArray<SchemaProperty>.Empty,
-                Required: ImmutableArray<string>.Empty,
-                Items: null);
-        }
-
-        var propertyBuilder = ImmutableArray.CreateBuilder<SchemaProperty>(parameters.Length);
-        var requiredBuilder = ImmutableArray.CreateBuilder<string>(parameters.Length);
-        foreach (var def in parameters)
-        {
-            var mappedType = PowerShellTypeMapper.Map(def.Type);
-            propertyBuilder.Add(new SchemaProperty(
-                Name: def.Name,
-                Type: mappedType.Type,
-                Enum: null,
-                Minimum: null,
-                Maximum: null,
-                Pattern: null,
-                Schema: mappedType.Schema));
-            if (def.IsMandatory)
-            {
-                requiredBuilder.Add(def.Name);
-            }
-        }
-
-        return new SchemaDefinition(
-            Type: "object",
-            Properties: propertyBuilder.ToImmutable(),
-            Required: requiredBuilder.ToImmutable(),
-            Items: null);
-    }
-
     // CommandMetadata carries OutputType as a list of strings (one per declared
     // [OutputType] argument). The IR's OutputMetadata record holds a single
     // name + optional generic-args list; the mapper uses the first declared type
     // as the canonical name and drops the rest, matching the script-module
     // introspector's behavior of recording the first [OutputType(...)].
-    private static OutputMetadata? MapOutput(List<string> outputType)
+    private static OutputMetadata? MapOutput(List<string> outputTypes)
     {
-        if (outputType is null || outputType.Count == 0)
+        if (outputTypes is null || outputTypes.Count == 0)
         {
             return null;
         }
-        return new OutputMetadata(outputType[0], OutputTypeArguments: null);
+        return new OutputMetadata(outputTypes[0], OutputTypeArguments: null);
     }
 
 }

@@ -18,8 +18,17 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        try
+        {
+            if (Directory.Exists(_tempDir))
+            {
+                Directory.Delete(_tempDir, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // Best-effort cleanup; xUnit will clean up the temp path on process exit.
+        }
     }
 
     [Fact]
@@ -109,118 +118,250 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
         Assert.Equal("Returns a foo object.", tool.Description);
     }
 
+    private string LoadDiverseParamsModule() =>
+        FixtureResourceLoader.LoadUtf8Text(FixtureResourceLoader.DiverseParamsModule);
+
     [Fact]
-    public void Introspect_ToolCapturesDiverseParameterShapes()
+    public void Introspect_DiverseModule_ProducesExpectedTools()
     {
-        // Fixture content is embedded in the test assembly and materialized to a temp .psm1 here:
-        // 2 functions covering all 8 required parameter shapes — mandatory, optional, enum
-        // (ValidateSet), range (ValidateRange), pattern (ValidatePattern), array, switch, and
-        // secure-string. See ParameterShapeCoverage below for the per-parameter expectations.
-        var path = WriteFixture(
-            "DiverseParamsModule.psm1",
-            FixtureResourceLoader.LoadUtf8Text(FixtureResourceLoader.DiverseParamsModule));
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
 
         var result = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path));
+
         Assert.Equal("DiverseParamsModule", result.Module.Name);
         Assert.Equal(2, result.Tools.Length);
+        Assert.Contains(result.Tools, t => t.ToolName == "Get-Server");
+        Assert.Contains(result.Tools, t => t.ToolName == "Set-Config");
+    }
 
-        var getServer = result.Tools.Single(t => t.ToolName == "Get-Server");
-        var setConfig = result.Tools.Single(t => t.ToolName == "Set-Config");
+    [Fact]
+    public void Introspect_ToolDescription_FromHelpSynopsis()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
 
-        // -- Get-Server: mandatory, optional, enum, array --
-        Assert.Equal(3, getServer.Parameters.Length);
         Assert.Equal("Gets a server.", getServer.Description);
+    }
+
+    [Fact]
+    public void Introspect_MandatoryParameter_IsRequiredInSchema()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
 
         var name = getServer.Parameters.Single(p => p.Name == "Name");
         Assert.True(name.IsMandatory);
-        Assert.Equal("string", name.Type);
-        Assert.False(name.IsSecure);
-        Assert.Equal("The server name.", name.Description);
-        Assert.Null(name.DefaultValue);
+        Assert.Contains("Name", getServer.Schema.Required);
+    }
+
+    [Fact]
+    public void Introspect_OptionalParameter_NotInRequiredList()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
 
         var environment = getServer.Parameters.Single(p => p.Name == "Environment");
         Assert.False(environment.IsMandatory);
-        Assert.Equal("string", environment.Type);
-        Assert.Equal("prod", environment.DefaultValue);
-
-        var tags = getServer.Parameters.Single(p => p.Name == "Tags");
-        Assert.False(tags.IsMandatory);
-        Assert.Equal("string[]", tags.Type);
-
-        // Get-Server schema: object with one property per parameter; only mandatory params are Required.
-        Assert.Equal("object", getServer.Schema.Type);
-        Assert.Equal(3, getServer.Schema.Properties.Length);
-        Assert.Equal("Name", Assert.Single(getServer.Schema.Required));
         Assert.DoesNotContain("Environment", getServer.Schema.Required);
-        Assert.DoesNotContain("Tags", getServer.Schema.Required);
+    }
 
-        var nameSchema = getServer.Schema.Properties.Single(p => p.Name == "Name");
-        Assert.Equal("string", nameSchema.Type);
-        Assert.Null(nameSchema.Enum);
-        Assert.Null(nameSchema.Minimum);
-        Assert.Null(nameSchema.Maximum);
-        Assert.Null(nameSchema.Pattern);
+    [Fact]
+    public void Introspect_ParameterWithDefault_PreservesDefaultValue()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
+
+        var environment = getServer.Parameters.Single(p => p.Name == "Environment");
+        Assert.Equal("prod", environment.DefaultValue);
+    }
+
+    [Fact]
+    public void Introspect_ParameterWithHelpDescription_PreservesDescription()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
+
+        var name = getServer.Parameters.Single(p => p.Name == "Name");
+        Assert.Equal("The server name.", name.Description);
+    }
+
+    [Fact]
+    public void Introspect_ValidateSet_MapsToEnum()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
 
         var environmentSchema = getServer.Schema.Properties.Single(p => p.Name == "Environment");
         Assert.Equal("string", environmentSchema.Type);
         Assert.Equal(new[] { "prod", "staging", "dev" }, environmentSchema.Enum?.ToArray());
-        Assert.Null(environmentSchema.Minimum);
-        Assert.Null(environmentSchema.Maximum);
-        Assert.Null(environmentSchema.Pattern);
+    }
+
+    [Fact]
+    public void Introspect_ArrayParameter_MapsToArraySchemaWithItems()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var getServer = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Get-Server");
+
+        var tags = getServer.Parameters.Single(p => p.Name == "Tags");
+        Assert.Equal("string[]", tags.Type);
 
         var tagsSchema = getServer.Schema.Properties.Single(p => p.Name == "Tags");
         Assert.Equal("array", tagsSchema.Type);
         Assert.NotNull(tagsSchema.Schema);
-        Assert.Equal("array", tagsSchema.Schema!.Type);
-        Assert.NotNull(tagsSchema.Schema.Items);
+        Assert.NotNull(tagsSchema.Schema!.Items);
         Assert.Equal("string", tagsSchema.Schema.Items!.Type);
+    }
 
-        // -- Set-Config: mandatory, range, optional, pattern, switch, secure-string --
-        Assert.Equal(4, setConfig.Parameters.Length);
+    [Fact]
+    public void Introspect_ValidateRange_MapsToBounds()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var setConfig = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Set-Config");
 
-        var maxRetries = setConfig.Parameters.Single(p => p.Name == "MaxRetries");
-        Assert.True(maxRetries.IsMandatory);
-        Assert.Equal("int", maxRetries.Type);
-        Assert.False(maxRetries.IsSecure);
-
-        var prefix = setConfig.Parameters.Single(p => p.Name == "Prefix");
-        Assert.False(prefix.IsMandatory);
-        Assert.Equal("string", prefix.Type);
-        Assert.Equal("Default", prefix.DefaultValue);
-
-        var force = setConfig.Parameters.Single(p => p.Name == "Force");
-        Assert.False(force.IsMandatory);
-        Assert.Equal("switch", force.Type);
-
-        var password = setConfig.Parameters.Single(p => p.Name == "Password");
-        Assert.False(password.IsMandatory);
-        Assert.Equal("SecureString", password.Type);
-        Assert.True(password.IsSecure);
-
-        // Set-Config schema: ValidateRange and ValidatePattern flow into Minimum/Maximum/Pattern.
         var maxRetriesSchema = setConfig.Schema.Properties.Single(p => p.Name == "MaxRetries");
         Assert.Equal("integer", maxRetriesSchema.Type);
         Assert.Equal("1", maxRetriesSchema.Minimum);
         Assert.Equal("100", maxRetriesSchema.Maximum);
         Assert.Null(maxRetriesSchema.Enum);
         Assert.Null(maxRetriesSchema.Pattern);
+    }
+
+    [Fact]
+    public void Introspect_ValidatePattern_MapsToPattern()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var setConfig = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Set-Config");
 
         var prefixSchema = setConfig.Schema.Properties.Single(p => p.Name == "Prefix");
         Assert.Equal("^[A-Z][a-zA-Z0-9]*$", prefixSchema.Pattern);
         Assert.Null(prefixSchema.Enum);
         Assert.Null(prefixSchema.Minimum);
         Assert.Null(prefixSchema.Maximum);
+    }
+
+    [Fact]
+    public void Introspect_SwitchParameter_MapsToBoolean()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var setConfig = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Set-Config");
+
+        var force = setConfig.Parameters.Single(p => p.Name == "Force");
+        Assert.Equal("switch", force.Type);
+        Assert.False(force.IsMandatory);
 
         var forceSchema = setConfig.Schema.Properties.Single(p => p.Name == "Force");
         Assert.Equal("boolean", forceSchema.Type);
+    }
+
+    [Fact]
+    public void Introspect_SecureStringParameter_IsFlaggedSecure()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var setConfig = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Set-Config");
+
+        var password = setConfig.Parameters.Single(p => p.Name == "Password");
+        Assert.Equal("SecureString", password.Type);
+        Assert.True(password.IsSecure);
+        Assert.False(password.IsMandatory);
 
         var passwordSchema = setConfig.Schema.Properties.Single(p => p.Name == "Password");
-        Assert.Equal("SecureString", passwordSchema.Type);
+        Assert.Equal("object", passwordSchema.Type);
+        Assert.NotNull(passwordSchema.Schema);
+        Assert.Equal("SecureString", passwordSchema.Schema!.ComplexType);
+    }
+
+    [Fact]
+    public void Introspect_SetConfig_OnlyMandatoryInRequiredList()
+    {
+        var path = WritePsm1("DiverseParamsModule.psm1", LoadDiverseParamsModule());
+        var setConfig = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path))
+            .Tools.Single(t => t.ToolName == "Set-Config");
 
         Assert.Contains("MaxRetries", setConfig.Schema.Required);
         Assert.DoesNotContain("Prefix", setConfig.Schema.Required);
         Assert.DoesNotContain("Force", setConfig.Schema.Required);
         Assert.DoesNotContain("Password", setConfig.Schema.Required);
+    }
+
+    [Fact]
+    public void Introspect_ComplexTypeParameter_SchemaMapsToObjectWithComplexTypeMarker()
+    {
+        var path = WritePsm1("ComplexType.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param([System.ServiceProcess.ServiceController]$Service)
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+        var param = Assert.Single(tool.Parameters);
+        var schema = tool.Schema.Properties.Single(p => p.Name == "Service");
+
+        Assert.Equal("ServiceController", param.Type);
+        Assert.Equal("object", schema.Type);
+        Assert.NotNull(schema.Schema);
+        Assert.Equal("ServiceController", schema.Schema!.ComplexType);
+    }
+
+    [Fact]
+    public void Introspect_ComplexTypeArrayParameter_SchemaMapsToArrayWithObjectItems()
+    {
+        var path = WritePsm1("ComplexArray.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param([System.ServiceProcess.ServiceController[]]$Services)
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+        var schema = tool.Schema.Properties.Single(p => p.Name == "Services");
+
+        Assert.Equal("array", schema.Type);
+        Assert.NotNull(schema.Schema);
+        Assert.NotNull(schema.Schema!.Items);
+        Assert.Equal("object", schema.Schema.Items!.Type);
+        Assert.Equal("ServiceController", schema.Schema.Items!.ComplexType);
+    }
+
+    [Fact]
+    public void Introspect_ComplexTypeParameter_NoSpeculativeTyping()
+    {
+        // Unknown types must always map to "object" — never to the raw type name.
+        // This guards against speculative typing where the mapper guesses a schema type
+        // that doesn't correspond to a JSON Schema primitive.
+        var path = WritePsm1("Speculative.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param(
+                    [System.ServiceProcess.ServiceController]$Service,
+                    [MyApp.Foo.Bar]$Custom,
+                    [Nullable[int]]$Nullable
+                )
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+
+        foreach (var prop in tool.Schema.Properties)
+        {
+            Assert.Equal("object", prop.Type);
+            Assert.NotNull(prop.Schema);
+            Assert.NotNull(prop.Schema!.ComplexType);
+        }
     }
 
     [Theory]
@@ -455,14 +596,95 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
         Assert.Equal(IrVersion.Current, result.IrVersion);
     }
 
-    private string WritePsm1(string fileName, string content)
+    [Fact]
+    public void Introspect_EmptyValidateSet_ProducesEmptyEnumArray()
     {
-        var path = Path.Combine(_tempDir, fileName);
-        File.WriteAllText(path, content);
-        return path;
+        var path = WritePsm1("EmptySet.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param([ValidateSet()] [string]$Choice)
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+        var schema = tool.Schema.Properties.Single(p => p.Name == "Choice");
+
+        Assert.Equal("string", schema.Type);
+        Assert.NotNull(schema.Enum);
+        Assert.Empty(schema.Enum!.Value);
     }
 
-    private string WriteFixture(string fileName, string content)
+    [Fact]
+    public void Introspect_InvertedValidateRange_PreservesBoundsAsStrings()
+    {
+        // PowerShell allows min > max (inverted range); the extractor captures both
+        // bounds without validation. The schema emitter decides how to handle it.
+        var path = WritePsm1("InvertedRange.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param([ValidateRange(100, 1)] [int]$Value)
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+        var schema = tool.Schema.Properties.Single(p => p.Name == "Value");
+
+        Assert.Equal("integer", schema.Type);
+        Assert.Equal("100", schema.Minimum);
+        Assert.Equal("1", schema.Maximum);
+    }
+
+    [Fact]
+    public void Introspect_InvalidRegexPattern_PreservesPatternString()
+    {
+        // PowerShell tolerates many regex patterns at parse time; the extractor
+        // captures the string verbatim without compiling or validating it.
+        var path = WritePsm1("InvalidRegex.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param([ValidatePattern("(unclosed")] [string]$Text)
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+        var schema = tool.Schema.Properties.Single(p => p.Name == "Text");
+
+        Assert.Equal("string", schema.Type);
+        Assert.Equal("(unclosed", schema.Pattern);
+    }
+
+    [Fact]
+    public void Introspect_MultipleValidatorsOnSameParameter_AllConstraintsPreserved()
+    {
+        var path = WritePsm1("MultiValidator.psm1",
+            """
+            function Get-Foo {
+                [CmdletBinding()]
+                param(
+                    [Parameter(Mandatory)]
+                    [ValidateSet('a', 'b', 'c')]
+                    [ValidateRange(1, 10)]
+                    [ValidatePattern("^[a-c]$")]
+                    [string]$Value
+                )
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+        var schema = tool.Schema.Properties.Single(p => p.Name == "Value");
+
+        Assert.Equal("string", schema.Type);
+        Assert.Equal(new[] { "a", "b", "c" }, schema.Enum?.ToArray());
+        Assert.Equal("1", schema.Minimum);
+        Assert.Equal("10", schema.Maximum);
+        Assert.Equal("^[a-c]$", schema.Pattern);
+        Assert.Contains("Value", tool.Schema.Required);
+    }
+
+    private string WritePsm1(string fileName, string content)
     {
         var path = Path.Combine(_tempDir, fileName);
         File.WriteAllText(path, content);

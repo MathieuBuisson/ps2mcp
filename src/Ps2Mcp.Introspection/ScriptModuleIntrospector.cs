@@ -27,8 +27,11 @@ namespace Ps2Mcp.Introspection;
 /// <para>
 /// Only top-level function definitions are exposed as tools; nested functions inside a
 /// function's body are intentionally skipped because they are conventionally private
-/// helpers in PowerShell modules. The .psm1 file's basename (without extension) is used
-/// as the module name; explicit override of the module identity is left to the
+/// helpers in PowerShell modules. Functions defined inside top-level control-flow
+/// blocks (e.g. <c>if</c> / <c>switch</c>) are also excluded because
+/// <c>searchNestedScriptBlocks: false</c> skips all nested script blocks, not just
+/// those inside function bodies. The .psm1 file's basename (without extension) is
+/// used as the module name; explicit override of the module identity is left to the
 /// orchestrator (Phase 7).
 /// </para>
 /// <para>
@@ -54,6 +57,11 @@ public static class ScriptModuleIntrospector
         var moduleName = Path.GetFileNameWithoutExtension(parseResult.FilePath);
         var module = new ModuleDefinition(moduleName, Version: null);
 
+        // Ast is guaranteed non-null: Parser.ParseFile always returns a partial tree,
+        // and ScriptModuleParseResult.Ast is a non-nullable record parameter.
+        // searchNestedScriptBlocks: false skips nested functions (private helpers) and
+        // functions inside top-level control-flow blocks (if/switch), exposing only
+        // unconditionally defined top-level functions as tools.
         var functions = parseResult.Ast
             .FindAll(a => a is FunctionDefinitionAst, searchNestedScriptBlocks: false)
             .Cast<FunctionDefinitionAst>()
@@ -75,7 +83,11 @@ public static class ScriptModuleIntrospector
         var output = ExtractOutputType(function);
         var schema = BuildSchema(extractions);
 
-        var description = help?.Synopsis ?? help?.Description ?? string.Empty;
+        var description = !string.IsNullOrWhiteSpace(help?.Synopsis)
+            ? help!.Synopsis
+            : !string.IsNullOrWhiteSpace(help?.Description)
+                ? help!.Description
+                : string.Empty;
 
         var parameters = extractions.Select(e => e.Definition).ToImmutableArray();
 
@@ -147,12 +159,13 @@ public static class ScriptModuleIntrospector
     }
 
     // Literal values (string, number, boolean) are unwrapped from the boxed .NET value rather
-    // than read as source text, so the schema emitter sees the value the user wrote (e.g. "5"
-    // instead of "5", "foo" instead of "'foo'"). Variable references are surfaced as the
-    // variable's name (e.g. "foo" for $foo) so the schema emitter can decide how to bind them.
-    // Array literals (@() or @('a','b')) are surfaced as the source text, which preserves the
-    // PowerShell syntax verbatim. Other expression shapes (method calls, hashtables, casts) are
-    // left null to avoid fabricating a representation the schema emitter cannot parse.
+    // than read as source text, so the consumer sees the evaluated value (e.g. the int 5
+    // becomes "5", the string 'foo' becomes "foo" without quotes). Variable references are
+    // surfaced as the variable's name (e.g. "foo" for $foo) so the consumer can decide
+    // how to bind them. Array literals (@() or @('a','b')) are surfaced as the source text,
+    // which preserves the PowerShell syntax verbatim. Other expression shapes (method calls,
+    // hashtables, casts) are left null to avoid fabricating a representation the consumer
+    // cannot parse.
     private static string? ExtractDefaultValue(ParameterAst parameter)
     {
         if (parameter.DefaultValue is null)
@@ -188,32 +201,15 @@ public static class ScriptModuleIntrospector
                 Items: null);
         }
 
-        var propertyBuilder = ImmutableArray.CreateBuilder<SchemaProperty>(extractions.Length);
-        var requiredBuilder = ImmutableArray.CreateBuilder<string>(extractions.Length);
+        var parameters = extractions.Select(e => e.Definition).ToImmutableArray();
+        var validationByParam = new Dictionary<ParameterDefinition, ValidationMapping>(
+            extractions.Length, ReferenceEqualityComparer.Instance);
         foreach (var extraction in extractions)
         {
-            var def = extraction.Definition;
-            var attrs = extraction.Attributes;
-            var mappedType = PowerShellTypeMapper.Map(def.Type);
-            propertyBuilder.Add(new SchemaProperty(
-                Name: def.Name,
-                Type: mappedType.Type,
-                Enum: attrs.HasValidateSet ? attrs.ValidateSetValues : null,
-                Minimum: attrs.ValidateRangeMin,
-                Maximum: attrs.ValidateRangeMax,
-                Pattern: attrs.HasValidatePattern ? attrs.ValidatePattern : null,
-                Schema: mappedType.Schema));
-            if (def.IsMandatory)
-            {
-                requiredBuilder.Add(def.Name);
-            }
+            validationByParam[extraction.Definition] = ValidationMapper.Map(extraction.Attributes);
         }
 
-        return new SchemaDefinition(
-            Type: "object",
-            Properties: propertyBuilder.ToImmutable(),
-            Required: requiredBuilder.ToImmutable(),
-            Items: null);
+        return SchemaBuilder.FromParameters(parameters, def => validationByParam[def]);
     }
 
     private static OutputMetadata? ExtractOutputType(FunctionDefinitionAst function)
