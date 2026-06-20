@@ -1,4 +1,7 @@
 ﻿using System.Collections.Immutable;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json.Serialization;
 
 namespace Ps2Mcp.Core.Tests;
 
@@ -41,5 +44,17 @@ public static class ManifestFixtures
                         Items: null))),
             IrVersion: 3,
             ContentHash: "sha256:abc123");
-}
 
+    /// <summary>
+    /// Returns the expected JSON property names for <typeparamref name="T"/>
+    /// in the order defined by <see cref="JsonPropertyOrderAttribute"/>.
+    /// </summary>
+    public static string[] GetJsonPropertyOrder<T>()
+    {
+        return typeof(T)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .OrderBy(p => p.GetCustomAttribute<JsonPropertyOrderAttribute>()?.Order ?? 0)
+            .Select(p => p.Name)
+            .ToArray();
+    }
+}

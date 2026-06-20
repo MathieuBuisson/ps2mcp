@@ -68,7 +68,7 @@ public sealed class ManifestJsonSerializerTests
         using var doc = JsonDocument.Parse(bytes);
 
         var names = doc.RootElement.EnumerateObject().Select(p => p.Name).ToArray();
-        Assert.Equal(new[] { "Module", "Tools", "IrVersion", "ContentHash" }, names);
+        Assert.Equal(ManifestFixtures.GetJsonPropertyOrder<ManifestDefinition>(), names);
     }
 
     [Fact]
