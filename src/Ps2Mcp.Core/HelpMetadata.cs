@@ -1,13 +1,14 @@
 ﻿using System;
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using Ps2Mcp.Core.Internal;
 
 namespace Ps2Mcp.Core;
 
 public sealed record HelpMetadata(
-    string? Synopsis,
-    string? Description,
-    ImmutableArray<HelpExample> Examples)
+    [property: JsonPropertyOrder(1)] string? Synopsis,
+    [property: JsonPropertyOrder(2)] string? Description,
+    [property: JsonPropertyOrder(3)] ImmutableArray<HelpExample> Examples)
 {
     public bool Equals(HelpMetadata? other)
     {

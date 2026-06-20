@@ -1,5 +1,7 @@
-﻿namespace Ps2Mcp.Core;
+﻿using System.Text.Json.Serialization;
+
+namespace Ps2Mcp.Core;
 
 public sealed record ModuleDefinition(
-    string Name,
-    string? Version);
+    [property: JsonPropertyOrder(1)] string Name,
+    [property: JsonPropertyOrder(2)] string? Version);

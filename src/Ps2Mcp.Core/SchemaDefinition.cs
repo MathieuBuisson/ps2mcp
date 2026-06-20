@@ -1,15 +1,16 @@
 ﻿using System;
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using Ps2Mcp.Core.Internal;
 
 namespace Ps2Mcp.Core;
 
 public sealed record SchemaDefinition(
-    string Type,
-    ImmutableArray<SchemaProperty> Properties,
-    ImmutableArray<string> Required,
-    SchemaDefinition? Items,
-    string? ComplexType = null)
+    [property: JsonPropertyOrder(1)] string Type,
+    [property: JsonPropertyOrder(2)] ImmutableArray<SchemaProperty> Properties,
+    [property: JsonPropertyOrder(3)] ImmutableArray<string> Required,
+    [property: JsonPropertyOrder(4)] SchemaDefinition? Items,
+    [property: JsonPropertyOrder(5)] string? ComplexType = null)
 {
     public bool Equals(SchemaDefinition? other)
     {

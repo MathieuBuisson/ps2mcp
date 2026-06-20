@@ -1,12 +1,13 @@
 ﻿using System;
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using Ps2Mcp.Core.Internal;
 
 namespace Ps2Mcp.Core;
 
 public sealed record OutputMetadata(
-    string? OutputTypeName,
-    ImmutableArray<string>? OutputTypeArguments)
+    [property: JsonPropertyOrder(1)] string? OutputTypeName,
+    [property: JsonPropertyOrder(2)] ImmutableArray<string>? OutputTypeArguments)
 {
     public bool Equals(OutputMetadata? other)
     {
