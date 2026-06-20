@@ -8,4 +8,9 @@
     <ProjectReference Include="..\..\src\Ps2Mcp.Emitters.Python\Ps2Mcp.Emitters.Python.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\RepresentativeServerFixture.cs"
+             Link="Shared\RepresentativeServerFixture.cs" />
+  </ItemGroup>
+
 </Project>
