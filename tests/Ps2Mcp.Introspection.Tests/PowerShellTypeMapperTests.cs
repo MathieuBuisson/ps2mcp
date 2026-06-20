@@ -87,7 +87,12 @@ public sealed class PowerShellTypeMapperTests
     [InlineData("PSCredential", true)]
     [InlineData("pscredential", true)]
     [InlineData("System.Management.Automation.PSCredential", true)]
+    [InlineData("SecureString[]", true)]
+    [InlineData("System.Security.SecureString[]", true)]
+    [InlineData("PSCredential[]", true)]
+    [InlineData("System.Management.Automation.PSCredential[]", true)]
     [InlineData("string", false)]
+    [InlineData("string[]", false)]
     [InlineData("System.String", false)]
     [InlineData("NetworkCredential", false)]
     public void IsSecureType_ReturnsExpectedResult(string powerShellType, bool expected)

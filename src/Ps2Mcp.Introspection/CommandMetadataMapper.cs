@@ -6,22 +6,30 @@ using Ps2Mcp.Core;
 
 namespace Ps2Mcp.Introspection;
 
-// Converts a JSON deserialized binary-introspection payload into the project IR.
-// The mapping is the binary-module analog of ScriptModuleIntrospector: a one-shot
-// pass per command that builds a ToolDefinition, then a SchemaDefinition that
-// reflects the parameter shape. The payload carries only what PowerShell's
-// CommandMetadata exposes (parameter name, type, isMandatory, position, value
-// pipeline flags, aliases, parameter sets, output types); fields PowerShell does
-// not surface (validate-set, validate-range, validate-pattern, default value,
-// parameter description) are intentionally left null/empty here. Phase 8's schema
-// mapper takes the partial output and produces the full JSON-Schema-typed shape.
+/// <summary>
+/// Converts a JSON deserialized binary-introspection payload into the project IR.
+/// </summary>
+/// <remarks>
+/// The mapping is the binary-module analog of <see cref="ScriptModuleIntrospector"/>: a one-shot
+/// pass per command that builds a <see cref="ToolDefinition"/>, then a <see cref="SchemaDefinition"/>
+/// that reflects the parameter shape. The payload carries only what PowerShell's
+/// CommandMetadata exposes (parameter name, type, isMandatory, position, value
+/// pipeline flags, aliases, parameter sets, output types); fields PowerShell does
+/// not surface (validate-set, validate-range, validate-pattern, default value,
+/// parameter description) are intentionally left null/empty here. Phase 8's schema
+/// mapper takes the partial output and produces the full JSON-Schema-typed shape.
+/// </remarks>
 internal static class CommandMetadataMapper
 {
-    // Map(BinaryIntrospectionPayload) → McpServerDefinition.
-    // The version field is not part of the binary payload (PowerShell does not
-    // surface the module's manifest version via Get-Command's metadata), so the
-    // module definition carries Version=null and lets the orchestrator override
-    // it from the manifest when available.
+    /// <summary>
+    /// Maps a <see cref="BinaryIntrospectionPayload"/> to an <see cref="McpServerDefinition"/>.
+    /// </summary>
+    /// <remarks>
+    /// The version field is not part of the binary payload (PowerShell does not
+    /// surface the module's manifest version via Get-Command's metadata), so the
+    /// module definition carries Version=null and lets the orchestrator override
+    /// it from the manifest when available.
+    /// </remarks>
     public static McpServerDefinition Map(BinaryIntrospectionPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
@@ -77,11 +85,16 @@ internal static class CommandMetadataMapper
             ParameterSets: parameterSets);
     }
 
-    // CommandMetadata carries OutputType as a list of strings (one per declared
-    // [OutputType] argument). The IR's OutputMetadata record holds a single
-    // name + optional generic-args list; the mapper uses the first declared type
-    // as the canonical name and drops the rest, matching the script-module
-    // introspector's behavior of recording the first [OutputType(...)].
+    /// <summary>
+    /// Maps the command's output types to an <see cref="OutputMetadata"/>.
+    /// </summary>
+    /// <remarks>
+    /// CommandMetadata carries OutputType as a list of strings (one per declared
+    /// [OutputType] argument). The IR's OutputMetadata record holds a single
+    /// name + optional generic-args list; the mapper uses the first declared type
+    /// as the canonical name and drops the rest, matching the script-module
+    /// introspector's behavior of recording the first [OutputType(...)].
+    /// </remarks>
     private static OutputMetadata? MapOutput(List<string> outputTypes)
     {
         if (outputTypes is null || outputTypes.Count == 0)

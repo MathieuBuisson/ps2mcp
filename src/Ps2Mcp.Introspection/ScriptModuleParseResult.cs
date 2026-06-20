@@ -13,7 +13,8 @@ namespace Ps2Mcp.Introspection;
 public sealed record ScriptModuleParseResult(
     string FilePath,
     ScriptBlockAst Ast,
-    ImmutableArray<ParseError> Errors)
+    ImmutableArray<ParseError> Errors,
+    ImmutableArray<Token> Tokens = default)
 {
     /// <summary>
     /// Gets a value indicating whether the parser reported any syntax errors.

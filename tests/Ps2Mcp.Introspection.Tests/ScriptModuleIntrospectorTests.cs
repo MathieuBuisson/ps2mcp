@@ -366,17 +366,20 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
 
     [Theory]
     // PowerShell type names are case-insensitive: [securestring] and [pscredential] are valid
-    // declarations that must be detected as secure. The negative case guards against false
-    // positives (a non-secure type must never be marked IsSecure, regardless of casing).
+    // declarations that must be detected as secure. Array forms (SecureString[], PSCredential[])
+    // must also be flagged. The negative case guards against false positives.
     [InlineData("SecureString", true)]
     [InlineData("securestring", true)]
     [InlineData("SECURESTRING", true)]
     [InlineData("PSCredential", true)]
     [InlineData("pscredential", true)]
     [InlineData("PSCREDENTIAL", true)]
+    [InlineData("SecureString[]", true)]
+    [InlineData("PSCredential[]", true)]
     [InlineData("string", false)]
     [InlineData("String", false)]
     [InlineData("int", false)]
+    [InlineData("string[]", false)]
     public void Introspect_IsSecureDetectionIsCaseInsensitive(string typeText, bool expectedIsSecure)
     {
         var path = WritePsm1("SecureTypeCase.psm1",
@@ -682,6 +685,76 @@ public sealed class ScriptModuleIntrospectorTests : IDisposable
         Assert.Equal("10", schema.Maximum);
         Assert.Equal("^[a-c]$", schema.Pattern);
         Assert.Contains("Value", tool.Schema.Required);
+    }
+
+    [Fact]
+    public void Introspect_CmdletBindingDefaultParameterSetName_PopulatesRequiredParameterSet()
+    {
+        var path = WritePsm1("TestModule.psm1",
+            """
+            [CmdletBinding(DefaultParameterSetName = 'ByName')]
+            function Get-Foo {
+                param(
+                    [Parameter(ParameterSetName = 'ByName')]
+                    [string]$Name,
+                    [Parameter(ParameterSetName = 'ById')]
+                    [int]$Id
+                )
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+
+        Assert.Equal("ByName", tool.RequiredParameterSet);
+    }
+
+    [Fact]
+    public void Introspect_NoCmdletBinding_DefaultParameterSetIsNull()
+    {
+        var path = WritePsm1("TestModule.psm1",
+            "function Get-Foo { param([string]$Name) }");
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+
+        Assert.Null(tool.RequiredParameterSet);
+    }
+
+    [Fact]
+    public void Introspect_CmdletBindingWithoutDefaultParameterSet_DefaultParameterSetIsNull()
+    {
+        var path = WritePsm1("TestModule.psm1",
+            """
+            [CmdletBinding()]
+            function Get-Foo {
+                param([string]$Name)
+            }
+            """);
+
+        var tool = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path)).Tools[0];
+
+        Assert.Null(tool.RequiredParameterSet);
+    }
+
+    [Fact]
+    public void Introspect_MultipleFunctions_EachGetsOwnDefaultParameterSet()
+    {
+        var path = WritePsm1("TestModule.psm1",
+            """
+            [CmdletBinding(DefaultParameterSetName = 'ByName')]
+            function Get-Foo {
+                param([Parameter(ParameterSetName = 'ByName')][string]$Name)
+            }
+
+            [CmdletBinding(DefaultParameterSetName = 'ById')]
+            function Get-Bar {
+                param([Parameter(ParameterSetName = 'ById')][int]$Id)
+            }
+            """);
+
+        var result = ScriptModuleIntrospector.Introspect(ScriptModuleParser.Parse(path));
+
+        Assert.Equal("ByName", result.Tools[0].RequiredParameterSet);
+        Assert.Equal("ById", result.Tools[1].RequiredParameterSet);
     }
 
     private string WritePsm1(string fileName, string content)

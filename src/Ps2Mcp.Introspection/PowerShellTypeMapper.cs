@@ -38,6 +38,11 @@ internal static class PowerShellTypeMapper
     {
         var normalizedType = NormalizeTypeName(powerShellType);
 
+        if (normalizedType.EndsWith("[]", StringComparison.Ordinal))
+        {
+            normalizedType = normalizedType[..^2];
+        }
+
         return string.Equals(normalizedType, "SecureString", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(normalizedType, "PSCredential", StringComparison.OrdinalIgnoreCase);
     }

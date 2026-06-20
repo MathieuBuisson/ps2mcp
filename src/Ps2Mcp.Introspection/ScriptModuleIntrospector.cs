@@ -70,33 +70,30 @@ public static class ScriptModuleIntrospector
         var toolBuilder = ImmutableArray.CreateBuilder<ToolDefinition>(functions.Length);
         foreach (var function in functions)
         {
-            toolBuilder.Add(IntrospectFunction(function));
+            toolBuilder.Add(IntrospectFunction(function, parseResult.Tokens));
         }
 
         return new McpServerDefinition(module, toolBuilder.ToImmutable());
     }
 
-    private static ToolDefinition IntrospectFunction(FunctionDefinitionAst function)
+    private static ToolDefinition IntrospectFunction(FunctionDefinitionAst function, ImmutableArray<Token> tokens)
     {
         var help = CommandHelpExtractor.Extract(function);
         var extractions = ExtractParameters(function, help);
         var output = ExtractOutputType(function);
         var schema = BuildSchema(extractions);
 
-        var description = !string.IsNullOrWhiteSpace(help?.Synopsis)
-            ? help!.Synopsis
-            : !string.IsNullOrWhiteSpace(help?.Description)
-                ? help!.Description
-                : string.Empty;
+        var description = GetDescription(help);
 
         var parameters = extractions.Select(e => e.Definition).ToImmutableArray();
+        var requiredSet = ExtractDefaultParameterSet(function, tokens);
 
         return new ToolDefinition(
             ToolName: function.Name,
             SourceCommand: function.Name,
             Description: description,
             Parameters: parameters,
-            RequiredParameterSet: null,
+            RequiredParameterSet: requiredSet,
             Schema: schema,
             Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
             Help: help is null ? null : ToHelpMetadata(help),
@@ -106,6 +103,67 @@ public static class ScriptModuleIntrospector
     private readonly record struct ParameterExtraction(
         ParameterDefinition Definition,
         ParameterAttributeInfo Attributes);
+
+    // The PowerShell parser consumes [CmdletBinding()] into internal state that is not exposed
+    // via the public AST API in SDK 7.6.2 (ScriptRequirements is null, Body.Attributes is null).
+    // The only way to extract DefaultParameterSetName is from the token stream: look for the
+    // 'CmdletBinding' token before the function, then scan forward for 'DefaultParameterSetName ='
+    // followed by a string literal. We find the CmdletBinding closest to (but before) the
+    // function to avoid picking up a different function's [CmdletBinding()].
+    private static string? ExtractDefaultParameterSet(
+        FunctionDefinitionAst function,
+        ImmutableArray<Token> tokens)
+    {
+        if (tokens.IsDefaultOrEmpty)
+        {
+            return null;
+        }
+
+        var functionStart = function.Extent.StartOffset;
+
+        // Find the CmdletBinding token closest to (but before) this function.
+        var cmdletBindingIndex = -1;
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (tokens[i].Extent.StartOffset >= functionStart)
+            {
+                break;
+            }
+
+            if (string.Equals(tokens[i].Text, "CmdletBinding", StringComparison.OrdinalIgnoreCase))
+            {
+                cmdletBindingIndex = i;
+            }
+        }
+
+        if (cmdletBindingIndex < 0)
+        {
+            return null;
+        }
+
+        // Scan forward from CmdletBinding for DefaultParameterSetName = '<value>'.
+        for (var j = cmdletBindingIndex + 1; j < tokens.Length && j < cmdletBindingIndex + 10; j++)
+        {
+            if (!string.Equals(tokens[j].Text, "DefaultParameterSetName", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Next token should be '='.
+            if (j + 1 < tokens.Length && tokens[j + 1].Kind == TokenKind.Equals)
+            {
+                // Token after '=' should be a string literal.
+                if (j + 2 < tokens.Length && tokens[j + 2] is StringLiteralToken setString)
+                {
+                    return setString.Value;
+                }
+            }
+
+            break;
+        }
+
+        return null;
+    }
 
     private static ImmutableArray<ParameterExtraction> ExtractParameters(
         FunctionDefinitionAst function,
@@ -270,6 +328,11 @@ public static class ScriptModuleIntrospector
 
         return namedTypeName is null ? null : ExtractOutputTypeName(namedTypeName.Argument);
     }
+
+    private static string GetDescription(CommandHelpInfo? help) =>
+        !string.IsNullOrWhiteSpace(help?.Synopsis) ? help!.Synopsis
+        : !string.IsNullOrWhiteSpace(help?.Description) ? help!.Description
+        : string.Empty;
 
     private static HelpMetadata ToHelpMetadata(CommandHelpInfo help)
     {

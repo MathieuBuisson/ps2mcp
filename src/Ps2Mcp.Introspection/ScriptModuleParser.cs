@@ -34,7 +34,7 @@ public static class ScriptModuleParser
         if (!File.Exists(filePath))
             throw new FileNotFoundException("Script module file not found.", filePath);
 
-        var ast = Parser.ParseFile(filePath, out _, out var errors);
-        return new ScriptModuleParseResult(filePath, ast, errors.ToImmutableArray());
+        var ast = Parser.ParseFile(filePath, out var tokens, out var errors);
+        return new ScriptModuleParseResult(filePath, ast, errors.ToImmutableArray(), tokens.ToImmutableArray());
     }
 }
