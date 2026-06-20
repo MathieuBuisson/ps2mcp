@@ -5,12 +5,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Ps2Mcp.Emitters.TypeScript\Ps2Mcp.Emitters.TypeScript.csproj" />
+    <ProjectReference Include="../../src/Ps2Mcp.Emitters.TypeScript/Ps2Mcp.Emitters.TypeScript.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Shared\RepresentativeServerFixture.cs"
-             Link="Shared\RepresentativeServerFixture.cs" />
+    <Compile Include="../Shared/RepresentativeServerFixture.cs"
+             Link="Shared/RepresentativeServerFixture.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Snapshots/RepresentativeIndex.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativeIndex.ts" />
   </ItemGroup>
 
 </Project>
