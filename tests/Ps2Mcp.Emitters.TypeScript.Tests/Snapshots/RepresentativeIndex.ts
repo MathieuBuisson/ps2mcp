@@ -17,19 +17,18 @@ const server = new McpServer({
 server.registerTool(
   "get_demo_item",
   {
-    title: "Get-DemoItem",
     description: "Gets a demo item.",
-    inputSchema: getDemoItemInputSchema.shape,
+    inputSchema: getDemoItemInputSchema,
   },
   async (args) => invokePowerShellTool("Get-DemoItem", args, 4),
 );
 
 async function invokePowerShellTool(
   sourceCommand: string,
-  args: unknown,
+  _args: unknown,
   serializationDepth: number,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
-  void args;
+  // TODO: Implement PowerShell invocation once a cross-platform spawn mechanism is defined.
   throw new Error(
     `PowerShell invocation for ${sourceCommand} is not implemented yet. Bundled module path: ${bundledModuleImportPath}. Serialization depth: ${serializationDepth}.`,
   );

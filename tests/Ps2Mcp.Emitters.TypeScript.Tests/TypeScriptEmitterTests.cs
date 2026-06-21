@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Ps2Mcp.Core;
@@ -34,10 +36,99 @@ public sealed class TypeScriptEmitterTests
         var options = new EmitOptions("./modules/Demo.Module/Demo.Module.psd1");
 
         var result = await emitter.EmitAsync(server, options);
-        var file = Assert.Single(result.Files);
+        var files = result.Files.ToDictionary(file => file.RelativePath, StringComparer.Ordinal);
 
-        Assert.Equal("src/index.ts", file.RelativePath);
-        Assert.Equal(ReadEmbeddedText("Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativeIndex.ts"), file.Contents);
+        Assert.Equal(3, files.Count);
+        Assert.Equal(ReadEmbeddedText("Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativeIndex.ts"), files["src/index.ts"].Contents);
+        Assert.Equal(ReadEmbeddedText("Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativePackage.json"), files["package.json"].Contents);
+        Assert.Equal(ReadEmbeddedText("Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativeTsconfig.json"), files["tsconfig.json"].Contents);
+        Assert.Empty(result.Files.Where(file => file.RelativePath.EndsWith(".js", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public async Task EmitAsync_PackageJson_UsesTsxToRunTypeScriptEntrypoint()
+    {
+        var emitter = new TypeScriptEmitter();
+        var server = RepresentativeServerFixture.Create();
+        var options = new EmitOptions("./modules/Demo.Module/Demo.Module.psd1");
+
+        var result = await emitter.EmitAsync(server, options);
+        var packageJson = GetFileContents(result, "package.json");
+
+        Assert.Contains("\"start\": \"tsx src/index.ts\"", packageJson, StringComparison.Ordinal);
+        Assert.Contains("\"tsx\": \"^4.0.0\"", packageJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"start\": \"node src/index.ts\"", packageJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_InvalidModuleVersion_FallsBackToDefaultVersionInPackageAndServerMetadata()
+    {
+        var emitter = new TypeScriptEmitter();
+        var server = new McpServerDefinition(
+            new ModuleDefinition("Demo.Module", "not-a-semver"),
+            RepresentativeServerFixture.Create().Tools);
+        var options = new EmitOptions("./modules/Demo.Module/Demo.Module.psd1");
+
+        var result = await emitter.EmitAsync(server, options);
+        var packageJson = GetFileContents(result, "package.json");
+        var indexTs = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("\"version\": \"0.0.0\"", packageJson, StringComparison.Ordinal);
+        Assert.Contains("version: \"0.0.0\"", indexTs, StringComparison.Ordinal);
+        Assert.DoesNotContain("not-a-semver", packageJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("not-a-semver", indexTs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_InvalidModuleName_FallsBackToDefaultPackageName()
+    {
+        var emitter = new TypeScriptEmitter();
+        var server = new McpServerDefinition(
+            new ModuleDefinition("!!!", "1.2.3"),
+            RepresentativeServerFixture.Create().Tools);
+        var options = new EmitOptions("./modules/Demo.Module/Demo.Module.psd1");
+
+        var result = await emitter.EmitAsync(server, options);
+        var packageJson = GetFileContents(result, "package.json");
+
+        Assert.Contains("\"name\": \"ps2mcp-generated-mcp-server\"", packageJson, StringComparison.Ordinal);
+    }
+
+    [NpmFact]
+    public async Task EmitAsync_RepresentativeFixture_TypeScriptCompilesWithoutDiagnostics()
+    {
+        var emitter = new TypeScriptEmitter();
+        var server = RepresentativeServerFixture.Create();
+        var options = new EmitOptions("./modules/Demo.Module/Demo.Module.psd1");
+        var result = await emitter.EmitAsync(server, options);
+        var outputDirectory = Path.Combine(Path.GetTempPath(), "ps2mcp-typescript-emitter-tests", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            WriteEmittedFiles(outputDirectory, result.Files);
+
+            var install = RunProcess(
+                outputDirectory,
+                GetNpmExecutableName(),
+                "install",
+                "--ignore-scripts",
+                "--no-fund",
+                "--no-audit",
+                "--package-lock=false");
+            Assert.Equal(0, install.ExitCode);
+
+            var check = RunProcess(outputDirectory, GetNpmExecutableName(), "run", "check");
+            Assert.True(
+                check.ExitCode == 0,
+                $"Generated TypeScript failed to compile.{Environment.NewLine}STDOUT:{Environment.NewLine}{check.StandardOutput}{Environment.NewLine}STDERR:{Environment.NewLine}{check.StandardError}");
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+            {
+                Directory.Delete(outputDirectory, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -109,11 +200,11 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(toolA, toolB));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("const getDemoInputSchema = z.object({", contents, StringComparison.Ordinal);
         Assert.Contains("const getDemoInputSchema2 = z.object({", contents, StringComparison.Ordinal);
-        Assert.Equal(2, CountOccurrences(contents, "const getDemoInputSchema", StringComparison.Ordinal));
+        Assert.Equal(2, Regex.Matches(contents, Regex.Escape("const getDemoInputSchema"), RegexOptions.CultureInvariant).Count);
     }
 
     [Fact]
@@ -141,7 +232,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("const getFooInputSchema = z.object({", contents, StringComparison.Ordinal);
     }
@@ -183,7 +274,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("MysteryValues: z.array(z.unknown()).optional()", contents, StringComparison.Ordinal);
     }
@@ -221,7 +312,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("Mode: z.enum([\"Alpha\", \"Beta\"]).refine((value) => new RegExp(\"^[A-Z][a-z]+$\").test(value)", contents, StringComparison.Ordinal);
         Assert.DoesNotContain("Mode: z.enum([\"Alpha\", \"Beta\"]).regex(", contents, StringComparison.Ordinal);
@@ -254,7 +345,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains($"Value: {expectedExpression}", contents, StringComparison.Ordinal);
     }
@@ -283,7 +374,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("Email: z.string().regex(new RegExp(\"^.+@.+\\\\..+$\"))", contents, StringComparison.Ordinal);
     }
@@ -312,7 +403,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("Count: z.number().int().min(1).max(100)", contents, StringComparison.Ordinal);
     }
@@ -349,7 +440,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("Required: z.string(),", contents, StringComparison.Ordinal);
         Assert.Contains("Optional: z.string().optional(),", contents, StringComparison.Ordinal);
@@ -392,7 +483,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("Config: z.object({", contents, StringComparison.Ordinal);
         Assert.Contains("Id: z.number().int()", contents, StringComparison.Ordinal);
@@ -415,7 +506,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("z.object({", contents, StringComparison.Ordinal);
         Assert.Contains("});", contents, StringComparison.Ordinal);
@@ -445,7 +536,7 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("Mystery: z.unknown().optional()", contents, StringComparison.Ordinal);
     }
@@ -470,7 +561,32 @@ public sealed class TypeScriptEmitterTests
             ImmutableArray.Create(tool));
 
         var result = await emitter.EmitAsync(server, options);
-        var contents = Assert.Single(result.Files).Contents;
+        var contents = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("description: \"\",", contents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_NullToolDescription_EmitsEmptyString()
+    {
+        var emitter = new TypeScriptEmitter();
+        var options = new EmitOptions("./modules/Demo.Module/Demo.Module.psd1");
+        var tool = new ToolDefinition(
+            ToolName: "null_desc_tool",
+            SourceCommand: "Get-NullDesc",
+            Description: null!,
+            Parameters: ImmutableArray<ParameterDefinition>.Empty,
+            RequiredParameterSet: null,
+            Schema: new SchemaDefinition("object", [], [], null),
+            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
+            Help: null,
+            Output: null);
+        var server = new McpServerDefinition(
+            new ModuleDefinition("Demo.Module", "1.2.3"),
+            ImmutableArray.Create(tool));
+
+        var result = await emitter.EmitAsync(server, options);
+        var contents = GetFileContents(result, "src/index.ts");
 
         Assert.Contains("description: \"\",", contents, StringComparison.Ordinal);
     }
@@ -487,6 +603,47 @@ public sealed class TypeScriptEmitterTests
             Help: null,
             Output: null);
 
+    private static void WriteEmittedFiles(string outputDirectory, ImmutableArray<EmittedFile> files)
+    {
+        Directory.CreateDirectory(outputDirectory);
+
+        foreach (var file in files)
+        {
+            var path = Path.Combine(outputDirectory, file.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, file.Contents);
+        }
+    }
+
+    private static (int ExitCode, string StandardOutput, string StandardError) RunProcess(string workingDirectory, string fileName, params string[] args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"Failed to start process '{fileName}'.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        return (process.ExitCode, stdoutTask.GetAwaiter().GetResult(), stderrTask.GetAwaiter().GetResult());
+    }
+
+    private static string GetNpmExecutableName() => OperatingSystem.IsWindows() ? "npm.cmd" : "npm";
+
+    private static string GetFileContents(EmitResult result, string relativePath) =>
+        Assert.Single(result.Files.Where(file => string.Equals(file.RelativePath, relativePath, StringComparison.Ordinal))).Contents;
+
     private static string ReadEmbeddedText(string resourceName)
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
@@ -495,16 +652,44 @@ public sealed class TypeScriptEmitterTests
         return reader.ReadToEnd().Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
-    private static int CountOccurrences(string text, string value, StringComparison comparison)
-    {
-        var count = 0;
-        var index = 0;
-        while ((index = text.IndexOf(value, index, comparison)) >= 0)
-        {
-            count++;
-            index += value.Length;
-        }
+}
 
-        return count;
+internal sealed class NpmFactAttribute : FactAttribute
+{
+    public NpmFactAttribute()
+    {
+        if (!IsNpmAvailable())
+        {
+            Skip = "npm is required for this generated TypeScript compile smoke test.";
+        }
+    }
+
+    private static bool IsNpmAvailable()
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = OperatingSystem.IsWindows() ? "npm.cmd" : "npm",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("--version");
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return false;
+            }
+
+            process.WaitForExit();
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
