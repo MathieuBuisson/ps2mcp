@@ -434,19 +434,18 @@ public sealed class TypeScriptEmitter : IServerEmitter
     private static string ApplyPropertyConstraints(string baseExpression, SchemaProperty property) => property.Type switch
     {
         "string" => ApplyStringConstraints(baseExpression, property.Enum, property.Pattern),
-        "integer" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum, isInteger: true),
-        "number" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum, isInteger: false),
+        "integer" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum),
+        "number" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum),
         _ => baseExpression,
     };
 
-    private static string ApplyNumericConstraints(string baseExpression, string? minimum, string? maximum, ImmutableArray<string>? enumValues, bool isInteger)
+    private static string ApplyNumericConstraints(string baseExpression, string? minimum, string? maximum, ImmutableArray<string>? enumValues)
     {
         var hasEnum = enumValues is { Length: > 0 };
 
         if (hasEnum)
         {
-            var literalType = isInteger ? "z.number().int()" : "z.number()";
-            var literals = string.Join(", ", enumValues!.Value.Select(v => $"{literalType}.literal({QuoteNumericLiteral(v)})"));
+            var literals = string.Join(", ", enumValues!.Value.Select(v => $"z.literal({QuoteNumericLiteral(v)})"));
             baseExpression = $"z.union([{literals}])";
         }
 
@@ -497,6 +496,39 @@ public sealed class TypeScriptEmitter : IServerEmitter
         catch (ArgumentException ex)
         {
             throw new InvalidOperationException($"Invalid regular expression pattern '{pattern}': {ex.Message}", ex);
+        }
+
+        ValidateRegexSafety(pattern);
+    }
+
+    private static void ValidateRegexSafety(string pattern)
+    {
+        var regex = new Regex(pattern, RegexOptions.ECMAScript | RegexOptions.Compiled);
+        var adversarialInputs = new[]
+        {
+            new string('a', 25),
+            new string('a', 25) + "!",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa!",
+        };
+
+        foreach (var input in adversarialInputs)
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            try
+            {
+                var task = Task.Run(() => regex.IsMatch(input), cts.Token);
+                if (!task.Wait(TimeSpan.FromMilliseconds(100)))
+                {
+                    throw new InvalidOperationException(
+                        $"Regex pattern '{pattern}' is potentially vulnerable to catastrophic backtracking and was rejected.");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw new InvalidOperationException(
+                    $"Regex pattern '{pattern}' is potentially vulnerable to catastrophic backtracking and was rejected.");
+            }
         }
     }
 

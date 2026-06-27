@@ -1,0 +1,1 @@
+const testToolInputSchema = z.object({});

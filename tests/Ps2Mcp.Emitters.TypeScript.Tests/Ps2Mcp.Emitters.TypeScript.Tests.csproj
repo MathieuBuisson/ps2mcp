@@ -11,6 +11,8 @@
   <ItemGroup>
     <Compile Include="../Shared/RepresentativeServerFixture.cs"
              Link="Shared/RepresentativeServerFixture.cs" />
+    <Compile Include="../Shared/SchemaCoverageServerFixture.cs"
+             Link="Shared/SchemaCoverageServerFixture.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,6 +22,36 @@
                       LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativePackage.json" />
     <EmbeddedResource Include="Snapshots/RepresentativeTsconfig.json"
                       LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativeTsconfig.json" />
+    <EmbeddedResource Include="Snapshots/Schemas/IntegerEnum.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.IntegerEnum.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/NumberEnum.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.NumberEnum.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/IntegerEnumWithMinMax.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.IntegerEnumWithMinMax.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/NumberEnumWithMinMax.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.NumberEnumWithMinMax.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/StringEnumWithPattern.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.StringEnumWithPattern.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/StringWithPattern.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.StringWithPattern.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/NumericConstraints.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.NumericConstraints.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/RequiredOptional.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.RequiredOptional.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/NestedObject.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.NestedObject.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/EmptyObject.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.EmptyObject.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/UnknownType.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.UnknownType.ts" />
+    <EmbeddedResource Include="Snapshots/Schemas/ArrayFallback.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.Schemas.ArrayFallback.ts" />
+    <EmbeddedResource Include="Snapshots/SpawnFlags.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.SpawnFlags.ts" />
+    <EmbeddedResource Include="Snapshots/DriverScript.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.DriverScript.ts" />
+    <EmbeddedResource Include="Snapshots/ProfileHandling.ts"
+                      LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.ProfileHandling.ts" />
   </ItemGroup>
 
 </Project>

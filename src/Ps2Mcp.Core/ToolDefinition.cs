@@ -7,7 +7,7 @@ namespace Ps2Mcp.Core;
 public sealed record ToolDefinition(
     string ToolName,
     string SourceCommand,
-    string Description,
+    string? Description,
     ImmutableArray<ParameterDefinition> Parameters,
     string? RequiredParameterSet,
     SchemaDefinition Schema,
