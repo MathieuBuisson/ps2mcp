@@ -32,19 +32,36 @@ public sealed class TypeScriptEmitter : IServerEmitter
     private const string NodeTypesVersion = "^22.0.0";
     private const string TsxVersion = "^4.0.0";
     private const int IndentSize = 2;
-    private const string DefaultTimeoutMsName = "DEFAULT_TIMEOUT_MS";
 
     private const string PowerShellScript = """
         $ErrorActionPreference = 'Stop'
         $modulePath = $env:PS2MCP_MODULE_PATH
+        $profilePath = $env:PS2MCP_PROFILE_PATH
         $sourceCommand = $env:PS2MCP_SOURCE_COMMAND
         $serializationDepth = [int]$env:PS2MCP_SERIALIZATION_DEPTH
         $argumentsJson = [Console]::In.ReadToEnd()
         $arguments = if ([string]::IsNullOrWhiteSpace($argumentsJson)) { @{} } else { ConvertFrom-Json -InputObject $argumentsJson -AsHashtable }
+        if (-not [string]::IsNullOrWhiteSpace($profilePath)) {
+            if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+                throw "Bootstrap profile file not found: $profilePath"
+            }
+
+            try {
+                . $profilePath
+            }
+            catch {
+                throw "Bootstrap profile failed: $($_.Exception.Message)"
+            }
+        }
         Import-Module -Force $modulePath
         $result = & $sourceCommand @arguments
         $result | ConvertTo-Json -Depth $serializationDepth -Compress
         """;
+
+    private static readonly string[] PowerShellScriptStatements = PowerShellScript
+        .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+        .Select(static s => s.Trim())
+        .ToArray();
 
     /// <inheritdoc />
     public Task<EmitResult> EmitAsync(
@@ -142,6 +159,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
 
         RenderImports(builder);
         RenderConstants(builder, options);
+        RenderRuntimeOptions(builder);
         RenderSchemaDeclarations(builder, server.Tools, schemaIdentifiers, cancellationToken);
         RenderServerDeclaration(builder, server.Module.Name, resolvedVersion);
         RenderToolRegistrations(builder, server.Tools, schemaIdentifiers, cancellationToken);
@@ -170,21 +188,53 @@ public sealed class TypeScriptEmitter : IServerEmitter
             .AppendLine(");");
         builder.AppendLine("const invokePowerShellCommandScript = [");
 
-        var statements = PowerShellScript.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i < statements.Length; i++)
+        for (var i = 0; i < PowerShellScriptStatements.Length; i++)
         {
             builder.Append("  ");
-            builder.Append(QuoteTypeScriptString(statements[i].Trim()));
+            builder.Append(QuoteTypeScriptString(PowerShellScriptStatements[i]));
             builder.AppendLine(",");
         }
 
         builder.AppendLine("].join(\"; \");");
         builder.AppendLine();
-        builder.Append("const ")
-            .Append(DefaultTimeoutMsName)
-            .Append(" = ")
-            .Append(ExecutionDefinition.DefaultTimeoutMs.ToString(CultureInfo.InvariantCulture))
-            .AppendLine(";");
+    }
+
+    private static void RenderRuntimeOptions(StringBuilder builder)
+    {
+        builder.Append("""
+            type RuntimeOptions = {
+              profilePath?: string;
+            };
+
+            function parseRuntimeOptions(argv: string[]): RuntimeOptions {
+              let profilePath: string | undefined;
+
+              for (let index = 0; index < argv.length; index += 1) {
+                const argument = argv[index];
+                if (argument === "--profile") {
+                  if (profilePath !== undefined) {
+                    throw new Error("Runtime argument \"--profile\" may be specified at most once.");
+                  }
+
+                  index += 1;
+                  const value = argv[index];
+                  if (value === undefined || value.length === 0) {
+                    throw new Error("Runtime argument \"--profile\" requires a path value.");
+                  }
+
+                  profilePath = value;
+                  continue;
+                }
+
+                throw new Error(`Unknown runtime argument: ${argument}`);
+              }
+
+              return { profilePath };
+            }
+
+            const runtimeOptions = parseRuntimeOptions(process.argv.slice(2));
+
+            """);
         builder.AppendLine();
     }
 
@@ -248,6 +298,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
                 .Append(tool.Execution.SerializationDepth.ToString(CultureInfo.InvariantCulture))
                 .Append(", ")
                 .Append(tool.Execution.TimeoutMs.ToString(CultureInfo.InvariantCulture))
+                .Append(", runtimeOptions.profilePath")
                 .AppendLine("),");
             builder.AppendLine(");");
             builder.AppendLine();
@@ -262,6 +313,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
               args: unknown,
               serializationDepth: number,
               timeoutMs: number,
+              profilePath: string | undefined,
             ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
               const argsJson = args === undefined ? "{}" : JSON.stringify(args);
               const child = spawn(
@@ -276,13 +328,13 @@ public sealed class TypeScriptEmitter : IServerEmitter
                   env: {
                     ...process.env,
                     PS2MCP_MODULE_PATH: bundledModuleImportPath,
+                    PS2MCP_PROFILE_PATH: profilePath ?? "",
                     PS2MCP_SERIALIZATION_DEPTH: serializationDepth.toString(10),
                     PS2MCP_SOURCE_COMMAND: sourceCommand,
                   },
                   stdio: ["pipe", "pipe", "pipe"],
                 },
               );
-              child.stdin.end(argsJson, "utf8");
 
               child.stdout.setEncoding("utf8");
               child.stderr.setEncoding("utf8");
@@ -292,20 +344,33 @@ public sealed class TypeScriptEmitter : IServerEmitter
               child.stdout.on("data", (chunk: string) => stdoutChunks.push(chunk));
               child.stderr.on("data", (chunk: string) => stderrChunks.push(chunk));
 
-              const exitCode = await Promise.race([
-                new Promise<number | null>((resolveClose, reject) => {
-                  child.once("error", reject);
-                  child.once("close", (code) => resolveClose(code));
-                }),
-                new Promise<never>((_resolve, reject) => {
-                  setTimeout(() => {
-                    child.kill();
-                    reject(new Error(
-                      `PowerShell invocation for ${sourceCommand} exceeded timeout of ${timeoutMs}ms and was terminated.`,
-                    ));
-                  }, timeoutMs);
-                }),
-              ]);
+              const exitCode = await new Promise<number | null>((resolveClose, reject) => {
+                const onError = (err: Error) => {
+                  cleanup();
+                  reject(err);
+                };
+                const onClose = (code: number | null) => {
+                  cleanup();
+                  resolveClose(code);
+                };
+                const timer = setTimeout(() => {
+                  cleanup();
+                  child.kill();
+                  reject(new Error(
+                    `PowerShell invocation for ${sourceCommand} exceeded timeout of ${timeoutMs}ms and was terminated.`,
+                  ));
+                }, timeoutMs);
+                const cleanup = () => {
+                  clearTimeout(timer);
+                  child.stdin.off("error", onError);
+                  child.off("error", onError);
+                  child.off("close", onClose);
+                };
+                child.stdin.on("error", onError);
+                child.stdin.end(argsJson, "utf8");
+                child.once("error", onError);
+                child.once("close", onClose);
+              });
 
               if ((exitCode ?? 1) !== 0) {
                 const stderr = stderrChunks.join("").trim();
@@ -324,8 +389,8 @@ public sealed class TypeScriptEmitter : IServerEmitter
               }
               return { content };
             }
+
             """);
-        builder.AppendLine();
         builder.AppendLine();
     }
 
@@ -385,8 +450,12 @@ public sealed class TypeScriptEmitter : IServerEmitter
             baseExpression = $"z.union([{literals}])";
         }
 
-        baseExpression = AppendNumericConstraints(baseExpression, minimum, maximum);
-        return baseExpression;
+        if (hasEnum)
+        {
+            return baseExpression;
+        }
+
+        return AppendNumericConstraints(baseExpression, minimum, maximum);
     }
 
     private static string QuoteNumericLiteral(string value) =>

@@ -74,6 +74,7 @@ public sealed class TypeScriptEmitterTests
 
         Assert.Contains("$ErrorActionPreference = 'Stop'", indexTs, StringComparison.Ordinal);
         Assert.Contains("$modulePath = $env:PS2MCP_MODULE_PATH", indexTs, StringComparison.Ordinal);
+        Assert.Contains("$profilePath = $env:PS2MCP_PROFILE_PATH", indexTs, StringComparison.Ordinal);
         Assert.Contains("$sourceCommand = $env:PS2MCP_SOURCE_COMMAND", indexTs, StringComparison.Ordinal);
         Assert.Contains("$serializationDepth = [int]$env:PS2MCP_SERIALIZATION_DEPTH", indexTs, StringComparison.Ordinal);
         Assert.Contains("$argumentsJson = [Console]::In.ReadToEnd()", indexTs, StringComparison.Ordinal);
@@ -104,7 +105,41 @@ public sealed class TypeScriptEmitterTests
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_HasTimeoutConstant()
+    public async Task EmitAsync_RepresentativeFixture_ParsesOptionalProfileArgument()
+    {
+        var result = await EmitRepresentativeAsync();
+        var indexTs = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("function parseRuntimeOptions(argv: string[]): RuntimeOptions", indexTs, StringComparison.Ordinal);
+        Assert.Contains("if (argument === \"--profile\")", indexTs, StringComparison.Ordinal);
+        Assert.Contains("const runtimeOptions = parseRuntimeOptions(process.argv.slice(2));", indexTs, StringComparison.Ordinal);
+        Assert.Contains("runtimeOptions.profilePath", indexTs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_RepresentativeFixture_LeavesProfileOptionalAtRuntime()
+    {
+        var result = await EmitRepresentativeAsync();
+        var indexTs = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("profilePath?: string;", indexTs, StringComparison.Ordinal);
+        Assert.Contains("PS2MCP_PROFILE_PATH: profilePath ?? \"\"", indexTs, StringComparison.Ordinal);
+        Assert.Contains("if (-not [string]::IsNullOrWhiteSpace($profilePath)) {", indexTs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_RepresentativeFixture_FailsClearlyWhenProfileFileIsMissing()
+    {
+        var result = await EmitRepresentativeAsync();
+        var indexTs = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("Test-Path -LiteralPath $profilePath -PathType Leaf", indexTs, StringComparison.Ordinal);
+        Assert.Contains("Bootstrap profile file not found: $profilePath", indexTs, StringComparison.Ordinal);
+        Assert.Contains("Bootstrap profile failed: $($_.Exception.Message)", indexTs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_RepresentativeFixture_WiresBundledModuleImportPath()
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
@@ -479,6 +514,68 @@ public sealed class TypeScriptEmitterTests
     }
 
     [Fact]
+    public async Task EmitAsync_IntegerEnumWithMinMax_OmitsMinMax()
+    {
+        var emitter = new TypeScriptEmitter();
+        var options = CreateDefaultOptions();
+        var schema = new SchemaDefinition(
+            Type: "object",
+            Properties: ImmutableArray.Create(
+                new SchemaProperty(
+                    Name: "Priority",
+                    Type: "integer",
+                    Enum: ImmutableArray.Create("1", "2", "3"),
+                    Minimum: "1",
+                    Maximum: "3",
+                    Pattern: null,
+                    Schema: null)),
+            Required: ImmutableArray<string>.Empty,
+            Items: null);
+        var tool = CreateTool(schema);
+        var server = new McpServerDefinition(
+            new ModuleDefinition("Demo.Module", "1.2.3"),
+            ImmutableArray.Create(tool));
+
+        var result = await emitter.EmitAsync(server, options);
+        var contents = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("z.union([z.number().int().literal(1), z.number().int().literal(2), z.number().int().literal(3)])", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain(".min(", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain(".max(", contents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_NumberEnumWithMinMax_OmitsMinMax()
+    {
+        var emitter = new TypeScriptEmitter();
+        var options = CreateDefaultOptions();
+        var schema = new SchemaDefinition(
+            Type: "object",
+            Properties: ImmutableArray.Create(
+                new SchemaProperty(
+                    Name: "Score",
+                    Type: "number",
+                    Enum: ImmutableArray.Create("1.5", "2.5"),
+                    Minimum: "1.0",
+                    Maximum: "3.0",
+                    Pattern: null,
+                    Schema: null)),
+            Required: ImmutableArray<string>.Empty,
+            Items: null);
+        var tool = CreateTool(schema);
+        var server = new McpServerDefinition(
+            new ModuleDefinition("Demo.Module", "1.2.3"),
+            ImmutableArray.Create(tool));
+
+        var result = await emitter.EmitAsync(server, options);
+        var contents = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains("Score: z.union([z.number().literal(1.5), z.number().literal(2.5)])", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain(".min(", contents, StringComparison.Ordinal);
+        Assert.DoesNotContain(".max(", contents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EmitAsync_StringWithPattern_RendersRegex()
     {
         var emitter = new TypeScriptEmitter();
@@ -793,10 +890,11 @@ public sealed class TypeScriptEmitterTests
             startInfo.ArgumentList.Add(arg);
         }
 
+        using var timeoutSource = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"Failed to start process '{fileName}'.");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutSource.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeoutSource.Token);
+        await process.WaitForExitAsync(timeoutSource.Token);
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }
 
@@ -847,7 +945,7 @@ internal sealed class NpmFactAttribute : FactAttribute
                 return false;
             }
 
-            process.WaitForExit();
+            process.WaitForExit(10_000);
             return process.ExitCode == 0;
         }
         catch
