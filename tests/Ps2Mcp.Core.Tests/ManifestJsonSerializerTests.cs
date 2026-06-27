@@ -204,7 +204,7 @@ public sealed class ManifestJsonSerializerTests
                                     ComplexType: "PSCredential"))),
                         Required: ImmutableArray.Create("Credential"),
                         Items: null),
-                    Execution: new ExecutionDefinition(12),
+                    Execution: new ExecutionDefinition(12, ExecutionDefinition.DefaultTimeoutMs),
                     Help: new HelpMetadata("Gets a foo.", "Longer description.", ImmutableArray<HelpExample>.Empty),
                     Output: new OutputMetadata("FooResult", null))),
             IrVersion: 7);
@@ -250,7 +250,7 @@ public sealed class ManifestJsonSerializerTests
             Parameters: default,
             RequiredParameterSet: null,
             Schema: new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null),
-            Execution: new ExecutionDefinition(4),
+            Execution: new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs),
             Help: null,
             Output: null);
 

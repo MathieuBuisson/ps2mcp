@@ -106,7 +106,7 @@ public sealed class McpServerDefinitionTests
             Parameters: ImmutableArray<ParameterDefinition>.Empty,
             RequiredParameterSet: null,
             Schema: new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null),
-            Execution: new ExecutionDefinition(4),
+            Execution: new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs),
             Help: null,
             Output: null);
 }

@@ -10,7 +10,7 @@ public sealed class ToolDefinitionTests
     {
         var parameters = ImmutableArray<ParameterDefinition>.Empty;
         var schema = new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null);
-        var execution = new ExecutionDefinition(4);
+        var execution = new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs);
 
         var tool = new ToolDefinition("GetFoo", "Get-Foo", "Gets a foo.", parameters, "Default", schema, execution, null, null);
 
@@ -51,8 +51,8 @@ public sealed class ToolDefinitionTests
         // Two distinct ImmutableArray<ParameterDefinition> with element-identical contents must compare equal.
         var param1 = new ParameterDefinition("Name", "string", true, false, null, null, ImmutableArray<string>.Empty, ImmutableArray<string>.Empty);
         var param2 = new ParameterDefinition("Name", "string", true, false, null, null, ImmutableArray<string>.Empty, ImmutableArray<string>.Empty);
-        var a = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param1), null, EmptySchema(), new ExecutionDefinition(4), null, null);
-        var b = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param2), null, EmptySchema(), new ExecutionDefinition(4), null, null);
+        var a = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param1), null, EmptySchema(), new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs), null, null);
+        var b = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param2), null, EmptySchema(), new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs), null, null);
 
         Assert.Equal(a, b);
         Assert.Equal(a.GetHashCode(), b.GetHashCode());
@@ -72,8 +72,8 @@ public sealed class ToolDefinitionTests
     {
         // Regression: sequence contents must contribute to GetHashCode.
         var param = new ParameterDefinition("Name", "string", true, false, null, null, ImmutableArray<string>.Empty, ImmutableArray<string>.Empty);
-        var a = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray<ParameterDefinition>.Empty, null, EmptySchema(), new ExecutionDefinition(4), null, null);
-        var b = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param), null, EmptySchema(), new ExecutionDefinition(4), null, null);
+        var a = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray<ParameterDefinition>.Empty, null, EmptySchema(), new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs), null, null);
+        var b = new ToolDefinition("GetFoo", "Get-Foo", "d", ImmutableArray.Create(param), null, EmptySchema(), new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs), null, null);
 
         Assert.NotEqual(a.GetHashCode(), b.GetHashCode());
     }
@@ -86,7 +86,7 @@ public sealed class ToolDefinitionTests
             Parameters: ImmutableArray<ParameterDefinition>.Empty,
             RequiredParameterSet: requiredParameterSet,
             Schema: new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null),
-            Execution: new ExecutionDefinition(4),
+            Execution: new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs),
             Help: help,
             Output: output);
 

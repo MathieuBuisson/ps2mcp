@@ -95,7 +95,7 @@ public static class ScriptModuleIntrospector
             Parameters: parameters,
             RequiredParameterSet: requiredSet,
             Schema: schema,
-            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
+            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth, ExecutionDefinition.DefaultTimeoutMs),
             Help: help is null ? null : ToHelpMetadata(help),
             Output: output);
     }

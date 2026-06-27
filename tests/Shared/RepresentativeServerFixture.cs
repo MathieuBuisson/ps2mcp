@@ -21,7 +21,7 @@ internal static class RepresentativeServerFixture
             Parameters: ImmutableArray.Create(CreateNameParameter(), CreateSecretParameter()),
             RequiredParameterSet: DefaultParameterSet,
             Schema: CreateItemSchema(),
-            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
+            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth, ExecutionDefinition.DefaultTimeoutMs),
             Help: new HelpMetadata(
                 Synopsis: "Gets demo data.",
                 Description: "Returns representative data used by emitter fixture tests.",

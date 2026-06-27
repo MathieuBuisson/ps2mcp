@@ -59,7 +59,7 @@ internal static class CommandMetadataMapper
             Parameters: parameters,
             RequiredParameterSet: requiredSet,
             Schema: schema,
-            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth),
+            Execution: new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth, ExecutionDefinition.DefaultTimeoutMs),
             Help: null,
             Output: output);
     }

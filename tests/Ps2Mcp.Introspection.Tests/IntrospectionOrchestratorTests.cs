@@ -207,7 +207,7 @@ public class IntrospectionOrchestratorTests
                         Properties: ImmutableArray<SchemaProperty>.Empty,
                         Required: ImmutableArray<string>.Empty,
                         Items: null),
-                    Execution: new ExecutionDefinition(SerializationDepth: 4),
+                    Execution: new ExecutionDefinition(SerializationDepth: 4, TimeoutMs: ExecutionDefinition.DefaultTimeoutMs),
                     Help: null,
                     Output: null)));
     }

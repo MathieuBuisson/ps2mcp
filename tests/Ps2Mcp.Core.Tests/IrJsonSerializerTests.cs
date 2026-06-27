@@ -148,7 +148,7 @@ public sealed class IrJsonSerializerTests
             Parameters: ImmutableArray<ParameterDefinition>.Empty,
             RequiredParameterSet: null,
             Schema: new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null),
-            Execution: new ExecutionDefinition(4),
+            Execution: new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs),
             Help: null,
             Output: null);
         var server = new McpServerDefinition(new ModuleDefinition("M", null), ImmutableArray.Create(tool));
@@ -221,7 +221,7 @@ public sealed class IrJsonSerializerTests
             Parameters: ImmutableArray<ParameterDefinition>.Empty,
             RequiredParameterSet: null,
             Schema: new SchemaDefinition("object", ImmutableArray<SchemaProperty>.Empty, ImmutableArray<string>.Empty, null),
-            Execution: new ExecutionDefinition(4),
+            Execution: new ExecutionDefinition(4, ExecutionDefinition.DefaultTimeoutMs),
             Help: new HelpMetadata("Gets a foo.", "Longer description.", ImmutableArray<HelpExample>.Empty),
             Output: new OutputMetadata("string", null));
 }

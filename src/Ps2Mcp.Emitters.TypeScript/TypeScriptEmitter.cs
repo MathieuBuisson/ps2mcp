@@ -32,6 +32,19 @@ public sealed class TypeScriptEmitter : IServerEmitter
     private const string NodeTypesVersion = "^22.0.0";
     private const string TsxVersion = "^4.0.0";
     private const int IndentSize = 2;
+    private const string DefaultTimeoutMsName = "DEFAULT_TIMEOUT_MS";
+
+    private const string PowerShellScript = """
+        $ErrorActionPreference = 'Stop'
+        $modulePath = $env:PS2MCP_MODULE_PATH
+        $sourceCommand = $env:PS2MCP_SOURCE_COMMAND
+        $serializationDepth = [int]$env:PS2MCP_SERIALIZATION_DEPTH
+        $argumentsJson = [Console]::In.ReadToEnd()
+        $arguments = if ([string]::IsNullOrWhiteSpace($argumentsJson)) { @{} } else { ConvertFrom-Json -InputObject $argumentsJson -AsHashtable }
+        Import-Module -Force $modulePath
+        $result = & $sourceCommand @arguments
+        $result | ConvertTo-Json -Depth $serializationDepth -Compress
+        """;
 
     /// <inheritdoc />
     public Task<EmitResult> EmitAsync(
@@ -127,16 +140,61 @@ public sealed class TypeScriptEmitter : IServerEmitter
         var schemaIdentifiers = CreateSchemaIdentifiers(server.Tools);
         var resolvedVersion = ResolveModuleVersion(server.Module.Version);
 
+        RenderImports(builder);
+        RenderConstants(builder, options);
+        RenderSchemaDeclarations(builder, server.Tools, schemaIdentifiers, cancellationToken);
+        RenderServerDeclaration(builder, server.Module.Name, resolvedVersion);
+        RenderToolRegistrations(builder, server.Tools, schemaIdentifiers, cancellationToken);
+        RenderInvokePowerShellTool(builder);
+        RenderMain(builder);
+
+        return builder.ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
+    }
+
+    private static void RenderImports(StringBuilder builder)
+    {
+        builder.AppendLine("import { spawn } from \"node:child_process\";");
+        builder.AppendLine("import { dirname, resolve } from \"node:path\";");
+        builder.AppendLine("import { fileURLToPath } from \"node:url\";");
         builder.AppendLine("import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";");
         builder.AppendLine("import { StdioServerTransport } from \"@modelcontextprotocol/sdk/server/stdio.js\";");
         builder.AppendLine("import { z } from \"zod\";");
         builder.AppendLine();
-        builder.Append("const bundledModuleImportPath = ")
+    }
+
+    private static void RenderConstants(StringBuilder builder, EmitOptions options)
+    {
+        builder.AppendLine("const runtimeDirectory = dirname(fileURLToPath(import.meta.url));");
+        builder.Append("const bundledModuleImportPath = resolve(runtimeDirectory, ")
             .Append(QuoteTypeScriptString(options.BundledModuleImportPath))
+            .AppendLine(");");
+        builder.AppendLine("const invokePowerShellCommandScript = [");
+
+        var statements = PowerShellScript.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < statements.Length; i++)
+        {
+            builder.Append("  ");
+            builder.Append(QuoteTypeScriptString(statements[i].Trim()));
+            builder.AppendLine(",");
+        }
+
+        builder.AppendLine("].join(\"; \");");
+        builder.AppendLine();
+        builder.Append("const ")
+            .Append(DefaultTimeoutMsName)
+            .Append(" = ")
+            .Append(ExecutionDefinition.DefaultTimeoutMs.ToString(CultureInfo.InvariantCulture))
             .AppendLine(";");
         builder.AppendLine();
+    }
 
-        foreach (var tool in server.Tools)
+    private static void RenderSchemaDeclarations(
+        StringBuilder builder,
+        ImmutableArray<ToolDefinition> tools,
+        IReadOnlyDictionary<string, string> schemaIdentifiers,
+        CancellationToken cancellationToken)
+    {
+        foreach (var tool in tools)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -147,18 +205,28 @@ public sealed class TypeScriptEmitter : IServerEmitter
                 .AppendLine(";");
             builder.AppendLine();
         }
+    }
 
+    private static void RenderServerDeclaration(StringBuilder builder, string moduleName, string resolvedVersion)
+    {
         builder.AppendLine("const server = new McpServer({");
         builder.Append("  name: ")
-            .Append(QuoteTypeScriptString(server.Module.Name))
+            .Append(QuoteTypeScriptString(moduleName))
             .AppendLine(",");
         builder.Append("  version: ")
             .Append(QuoteTypeScriptString(resolvedVersion))
             .AppendLine(",");
         builder.AppendLine("});");
         builder.AppendLine();
+    }
 
-        foreach (var tool in server.Tools)
+    private static void RenderToolRegistrations(
+        StringBuilder builder,
+        ImmutableArray<ToolDefinition> tools,
+        IReadOnlyDictionary<string, string> schemaIdentifiers,
+        CancellationToken cancellationToken)
+    {
+        foreach (var tool in tools)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -178,33 +246,103 @@ public sealed class TypeScriptEmitter : IServerEmitter
                 .Append(QuoteTypeScriptString(tool.SourceCommand))
                 .Append(", args, ")
                 .Append(tool.Execution.SerializationDepth.ToString(CultureInfo.InvariantCulture))
+                .Append(", ")
+                .Append(tool.Execution.TimeoutMs.ToString(CultureInfo.InvariantCulture))
                 .AppendLine("),");
             builder.AppendLine(");");
             builder.AppendLine();
         }
+    }
 
-        builder.AppendLine("async function invokePowerShellTool(");
-        builder.AppendLine("  sourceCommand: string,");
-        builder.AppendLine("  _args: unknown,");
-        builder.AppendLine("  serializationDepth: number,");
-        builder.AppendLine("): Promise<{ content: Array<{ type: \"text\"; text: string }> }> {");
-        builder.AppendLine("  // TODO: Implement PowerShell invocation once a cross-platform spawn mechanism is defined.");
-        builder.AppendLine("  throw new Error(");
-        builder.AppendLine("    `PowerShell invocation for ${sourceCommand} is not implemented yet. Bundled module path: ${bundledModuleImportPath}. Serialization depth: ${serializationDepth}.`,");
-        builder.AppendLine("  );");
-        builder.AppendLine("}");
-        builder.AppendLine();
-        builder.AppendLine("async function main(): Promise<void> {");
-        builder.AppendLine("  const transport = new StdioServerTransport();");
-        builder.AppendLine("  await server.connect(transport);");
-        builder.AppendLine("}");
-        builder.AppendLine();
-        builder.AppendLine("void main().catch((error) => {");
-        builder.AppendLine("  console.error(error);");
-        builder.AppendLine("  process.exitCode = 1;");
-        builder.AppendLine("});");
+    private static void RenderInvokePowerShellTool(StringBuilder builder)
+    {
+        builder.Append("""
+            async function invokePowerShellTool(
+              sourceCommand: string,
+              args: unknown,
+              serializationDepth: number,
+              timeoutMs: number,
+            ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+              const argsJson = args === undefined ? "{}" : JSON.stringify(args);
+              const child = spawn(
+                "pwsh",
+                [
+                  "-NoProfile",
+                  "-NonInteractive",
+                  "-Command",
+                  invokePowerShellCommandScript,
+                ],
+                {
+                  env: {
+                    ...process.env,
+                    PS2MCP_MODULE_PATH: bundledModuleImportPath,
+                    PS2MCP_SERIALIZATION_DEPTH: serializationDepth.toString(10),
+                    PS2MCP_SOURCE_COMMAND: sourceCommand,
+                  },
+                  stdio: ["pipe", "pipe", "pipe"],
+                },
+              );
+              child.stdin.end(argsJson, "utf8");
 
-        return builder.ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
+              child.stdout.setEncoding("utf8");
+              child.stderr.setEncoding("utf8");
+
+              const stdoutChunks: string[] = [];
+              const stderrChunks: string[] = [];
+              child.stdout.on("data", (chunk: string) => stdoutChunks.push(chunk));
+              child.stderr.on("data", (chunk: string) => stderrChunks.push(chunk));
+
+              const exitCode = await Promise.race([
+                new Promise<number | null>((resolveClose, reject) => {
+                  child.once("error", reject);
+                  child.once("close", (code) => resolveClose(code));
+                }),
+                new Promise<never>((_resolve, reject) => {
+                  setTimeout(() => {
+                    child.kill();
+                    reject(new Error(
+                      `PowerShell invocation for ${sourceCommand} exceeded timeout of ${timeoutMs}ms and was terminated.`,
+                    ));
+                  }, timeoutMs);
+                }),
+              ]);
+
+              if ((exitCode ?? 1) !== 0) {
+                const stderr = stderrChunks.join("").trim();
+                throw new Error(
+                  `PowerShell invocation for ${sourceCommand} failed with exit code ${exitCode ?? "null"}: ${stderr}`,
+                );
+              }
+
+              const stdout = stdoutChunks.join("").trim();
+              const stderr = stderrChunks.join("").trim();
+              const content: Array<{ type: "text"; text: string }> = [
+                { type: "text", text: stdout.length === 0 ? "null" : stdout },
+              ];
+              if (stderr.length > 0) {
+                content.push({ type: "text", text: stderr });
+              }
+              return { content };
+            }
+            """);
+        builder.AppendLine();
+        builder.AppendLine();
+    }
+
+    private static void RenderMain(StringBuilder builder)
+    {
+        builder.Append("""
+            async function main(): Promise<void> {
+              const transport = new StdioServerTransport();
+              await server.connect(transport);
+            }
+
+            void main().catch((error) => {
+              console.error(error);
+              process.exitCode = 1;
+            });
+            """);
+        builder.AppendLine();
     }
 
     private static void AppendObjectShape(StringBuilder builder, SchemaDefinition schema, int indentLevel)
@@ -231,10 +369,30 @@ public sealed class TypeScriptEmitter : IServerEmitter
     private static string ApplyPropertyConstraints(string baseExpression, SchemaProperty property) => property.Type switch
     {
         "string" => ApplyStringConstraints(baseExpression, property.Enum, property.Pattern),
-        "integer" => AppendNumericConstraints(baseExpression, property.Minimum, property.Maximum),
-        "number" => AppendNumericConstraints(baseExpression, property.Minimum, property.Maximum),
+        "integer" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum, isInteger: true),
+        "number" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum, isInteger: false),
         _ => baseExpression,
     };
+
+    private static string ApplyNumericConstraints(string baseExpression, string? minimum, string? maximum, ImmutableArray<string>? enumValues, bool isInteger)
+    {
+        var hasEnum = enumValues is { Length: > 0 };
+
+        if (hasEnum)
+        {
+            var literalType = isInteger ? "z.number().int()" : "z.number()";
+            var literals = string.Join(", ", enumValues!.Value.Select(v => $"{literalType}.literal({QuoteNumericLiteral(v)})"));
+            baseExpression = $"z.union([{literals}])";
+        }
+
+        baseExpression = AppendNumericConstraints(baseExpression, minimum, maximum);
+        return baseExpression;
+    }
+
+    private static string QuoteNumericLiteral(string value) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+            ? value
+            : QuoteTypeScriptString(value);
 
     private static string ApplyStringConstraints(string baseExpression, ImmutableArray<string>? enumValues, string? pattern)
     {
@@ -249,6 +407,8 @@ public sealed class TypeScriptEmitter : IServerEmitter
             return expression;
         }
 
+        ValidateRegexPattern(pattern);
+
         if (!hasEnum)
         {
             return expression + $".regex(new RegExp({QuoteTypeScriptString(pattern)}))";
@@ -257,6 +417,18 @@ public sealed class TypeScriptEmitter : IServerEmitter
         return expression
             + $".refine((value) => new RegExp({QuoteTypeScriptString(pattern)}).test(value), "
             + $"{{ message: {QuoteTypeScriptString($"Expected value matching pattern {pattern}.")} }})";
+    }
+
+    private static void ValidateRegexPattern(string pattern)
+    {
+        try
+        {
+            _ = new Regex(pattern, RegexOptions.ECMAScript | RegexOptions.Compiled);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new InvalidOperationException($"Invalid regular expression pattern '{pattern}': {ex.Message}", ex);
+        }
     }
 
     /// <summary>
@@ -481,35 +653,43 @@ public sealed class TypeScriptEmitter : IServerEmitter
             return false;
         }
 
-        var buildSplit = value.Split('+');
-        if (buildSplit.Length > 2)
+        var buildSeparatorIndex = value.IndexOf('+', StringComparison.Ordinal);
+        if (buildSeparatorIndex >= 0 && value.IndexOf('+', buildSeparatorIndex + 1) >= 0)
         {
             return false;
         }
 
-        var mainAndPrerelease = buildSplit[0].Split('-');
-        if (mainAndPrerelease.Length > 2)
-        {
-            return false;
-        }
+        var mainAndBuild = SplitAtFirst(value, buildSeparatorIndex);
+        var prereleaseSeparatorIndex = mainAndBuild.Before.IndexOf('-', StringComparison.Ordinal);
+        var mainAndPrerelease = SplitAtFirst(mainAndBuild.Before, prereleaseSeparatorIndex);
 
-        var coreIdentifiers = mainAndPrerelease[0].Split('.');
+        var coreIdentifiers = mainAndPrerelease.Before.Split('.');
         if (coreIdentifiers.Length != 3 || coreIdentifiers.Any(identifier => !IsNumericSemVerIdentifier(identifier)))
         {
             return false;
         }
 
-        if (mainAndPrerelease.Length == 2 && !HasValidSemVerIdentifiers(mainAndPrerelease[1], allowLeadingZeroesInNumericIdentifiers: false))
+        if (mainAndPrerelease.After is not null && !HasValidSemVerIdentifiers(mainAndPrerelease.After, allowLeadingZeroesInNumericIdentifiers: false))
         {
             return false;
         }
 
-        if (buildSplit.Length == 2 && !HasValidSemVerIdentifiers(buildSplit[1], allowLeadingZeroesInNumericIdentifiers: true))
+        if (mainAndBuild.After is not null && !HasValidSemVerIdentifiers(mainAndBuild.After, allowLeadingZeroesInNumericIdentifiers: true))
         {
             return false;
         }
 
         return true;
+    }
+
+    private static (string Before, string? After) SplitAtFirst(string value, int separatorIndex)
+    {
+        if (separatorIndex < 0)
+        {
+            return (value, null);
+        }
+
+        return (value[..separatorIndex], value[(separatorIndex + 1)..]);
     }
 
     private static bool HasValidSemVerIdentifiers(string value, bool allowLeadingZeroesInNumericIdentifiers)
