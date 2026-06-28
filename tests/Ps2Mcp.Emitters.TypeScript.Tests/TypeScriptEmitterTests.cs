@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -78,7 +78,7 @@ public sealed class TypeScriptEmitterTests
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_UsesPwshSpawnFlags()
+    public async Task EmitAsync_RepresentativeFixture_SpawnCallBlock_MatchesSnapshot()
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
@@ -88,63 +88,73 @@ public sealed class TypeScriptEmitterTests
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_DriverScriptContainsRequiredStatements()
+    public async Task EmitAsync_RepresentativeFixture_DriverScriptSection_MatchesSnapshot()
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
-        var section = ExtractSection(indexTs, "const invokePowerShellCommandScript = [", "].join(\"; \");");
+        var section = ExtractSection(indexTs, "const invokePowerShellCommandScript = `", "`;");
 
         await AssertSnapshotAsync("DriverScript.ts", section);
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_DriverScriptJoinsWithSemicolons()
+    public async Task EmitAsync_RepresentativeFixture_DriverScriptIsTemplateLiteral()
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
-        var section = ExtractSection(indexTs, "const invokePowerShellCommandScript = [", "].join(\"; \");");
 
-        await AssertSnapshotAsync("DriverScript.ts", section);
+        Assert.Contains("const invokePowerShellCommandScript = `", indexTs, StringComparison.Ordinal);
+        Assert.DoesNotContain("const invokePowerShellCommandScript = [", indexTs, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_TransmitsArgumentsViaStandardInput()
+    public async Task EmitAsync_RepresentativeFixture_DriverScriptParsesInPowerShell()
     {
+        var pwshAvailable = await IsPwshAvailableAsync();
+        if (!pwshAvailable)
+        {
+            return;
+        }
+
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
-        var spawnSection = ExtractSection(indexTs, "  const child = spawn(", "  );");
+        var script = ExtractPowerShellScript(indexTs);
 
-        await AssertSnapshotAsync("SpawnFlags.ts", spawnSection);
+        var tempFile = Path.Combine(Path.GetTempPath(), "ps2mcp-test", $"{Guid.NewGuid():N}.ps1");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(tempFile)!);
+            File.WriteAllText(tempFile, script);
+
+            var (exitCode, _, stderr) = await RunProcess(
+                Path.GetTempPath(),
+                OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                $". {{ [System.Management.Automation.Language.Parser]::ParseFile('{tempFile.Replace("'", "''")}', [ref]$null, [ref]$null) | Out-Null }}");
+
+            Assert.True(
+                exitCode == 0,
+                $"PowerShell script failed to parse.{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_ParsesOptionalProfileArgument()
+    public async Task EmitAsync_RepresentativeFixture_ProfileHandlingBlock_MatchesSnapshot()
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
         var section = ExtractSection(indexTs, "type RuntimeOptions = {", "const runtimeOptions = parseRuntimeOptions(process.argv.slice(2));");
 
         await AssertSnapshotAsync("ProfileHandling.ts", section);
-    }
-
-    [Fact]
-    public async Task EmitAsync_RepresentativeFixture_LeavesProfileOptionalAtRuntime()
-    {
-        var result = await EmitRepresentativeAsync();
-        var indexTs = GetFileContents(result, "src/index.ts");
-        var section = ExtractSection(indexTs, "type RuntimeOptions = {", "const runtimeOptions = parseRuntimeOptions(process.argv.slice(2));");
-
-        await AssertSnapshotAsync("ProfileHandling.ts", section);
-    }
-
-    [Fact]
-    public async Task EmitAsync_RepresentativeFixture_FailsClearlyWhenProfileFileIsMissing()
-    {
-        var result = await EmitRepresentativeAsync();
-        var indexTs = GetFileContents(result, "src/index.ts");
-        var section = ExtractSection(indexTs, "const invokePowerShellCommandScript = [", "].join(\"; \");");
-
-        await AssertSnapshotAsync("DriverScript.ts", section);
     }
 
     [Fact]
@@ -152,15 +162,11 @@ public sealed class TypeScriptEmitterTests
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
-        var driverSection = ExtractSection(indexTs, "const invokePowerShellCommandScript = [", "].join(\"; \");");
-        var spawnSection = ExtractSection(indexTs, "  const child = spawn(", "  );");
 
         Assert.Contains(
-            $"async (args) => invokePowerShellTool(\"Get-DemoItem\", args, {ExecutionDefinition.DefaultSerializationDepth}, {ExecutionDefinition.DefaultTimeoutMs}, runtimeOptions.profilePath)",
+            $"async (args) => invokePowerShellTool(\"Get-DemoItem\", args, [\"Secret\"], {ExecutionDefinition.DefaultSerializationDepth}, {ExecutionDefinition.DefaultTimeoutMs}, runtimeOptions.profilePath)",
             indexTs,
             StringComparison.Ordinal);
-        await AssertSnapshotAsync("DriverScript.ts", driverSection);
-        await AssertSnapshotAsync("SpawnFlags.ts", spawnSection);
     }
 
     [Fact]
@@ -177,23 +183,69 @@ public sealed class TypeScriptEmitterTests
         var indexTs = GetFileContents(result, "src/index.ts");
 
         Assert.Contains(
-            $"async (args) => invokePowerShellTool(\"Get-Test\", args, {customSerializationDepth}, {ExecutionDefinition.DefaultTimeoutMs}, runtimeOptions.profilePath)",
+            $"async (args) => invokePowerShellTool(\"Get-Test\", args, [], {customSerializationDepth}, {ExecutionDefinition.DefaultTimeoutMs}, runtimeOptions.profilePath)",
             indexTs,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
-            $"async (args) => invokePowerShellTool(\"Get-Test\", args, {ExecutionDefinition.DefaultSerializationDepth}, {ExecutionDefinition.DefaultTimeoutMs}, runtimeOptions.profilePath)",
+            $"async (args) => invokePowerShellTool(\"Get-Test\", args, [], {ExecutionDefinition.DefaultSerializationDepth}, {ExecutionDefinition.DefaultTimeoutMs}, runtimeOptions.profilePath)",
             indexTs,
             StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task EmitAsync_RepresentativeFixture_WiresBundledModuleImportPath()
+    public async Task EmitAsync_SecureStringParameter_ConvertsValueInsidePowerShellAndMarksSecretDescription()
+    {
+        var schema = new SchemaDefinition(
+            Type: "object",
+            Properties: ImmutableArray.Create(
+                new SchemaProperty(
+                    Name: "Secret",
+                    Type: "string",
+                    Enum: null,
+                    Minimum: null,
+                    Maximum: null,
+                    Pattern: null,
+                    Schema: null)),
+            Required: ImmutableArray.Create("Secret"),
+            Items: null);
+        var secureParameter = new ParameterDefinition(
+            Name: "Secret",
+            Type: "SecureString",
+            IsMandatory: true,
+            IsSecure: true,
+            Description: "A secret token.",
+            DefaultValue: null,
+            Aliases: ImmutableArray<string>.Empty,
+            ParameterSets: ImmutableArray.Create("Default"));
+        var tool = CreateTool(schema, parameters: ImmutableArray.Create(secureParameter));
+        var server = CreateServer(tool);
+
+        var result = await Emitter.EmitAsync(server, DefaultOptions);
+        var indexTs = GetFileContents(result, "src/index.ts");
+
+        Assert.Contains(
+            "Secret: z.string().describe(\"A secret token. Treated as a secret.\")",
+            indexTs,
+            StringComparison.Ordinal);
+        Assert.Contains("PS2MCP_SECURE_PARAMETER_NAMES: JSON.stringify(secureParameterNames)", indexTs, StringComparison.Ordinal);
+        Assert.Contains("ConvertTo-SecureString -String $secureValue -AsPlainText -Force", indexTs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitAsync_RepresentativeFixture_MapsPowerShellFailuresToStructuredErrorPayloads()
     {
         var result = await EmitRepresentativeAsync();
         var indexTs = GetFileContents(result, "src/index.ts");
-        var section = ExtractSection(indexTs, "  const child = spawn(", "  );");
 
-        await AssertSnapshotAsync("SpawnFlags.ts", section);
+        Assert.Contains("'invalid input'", indexTs, StringComparison.Ordinal);
+        Assert.Contains("'module load failure'", indexTs, StringComparison.Ordinal);
+        Assert.Contains("'bootstrap profile failure'", indexTs, StringComparison.Ordinal);
+        Assert.Contains("'command execution failure'", indexTs, StringComparison.Ordinal);
+        Assert.Contains("'serialization failure'", indexTs, StringComparison.Ordinal);
+        Assert.Contains("'runtime internal error'", indexTs, StringComparison.Ordinal);
+        Assert.Contains("function parsePowerShellError(", indexTs, StringComparison.Ordinal);
+        Assert.Contains("isError: true", indexTs, StringComparison.Ordinal);
+        Assert.Contains("JSON.stringify(errorPayload)", indexTs, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -320,6 +372,140 @@ public sealed class TypeScriptEmitterTests
             {
                 Directory.Delete(outputDirectory, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task EmitAsync_RepresentativeFixture_ToolCallRoundTripsSuccessfully()
+    {
+        var npmAvailable = await IsNpmAvailableAsync();
+        var pwshAvailable = await IsPwshAvailableAsync();
+        if (!npmAvailable || !pwshAvailable)
+        {
+            return;
+        }
+
+        var (moduleDir, moduleName) = CreateTempPowerShellModule();
+        var outputDirectory = Path.Combine(Path.GetTempPath(), "ps2mcp-roundtrip", Guid.NewGuid().ToString("N"));
+        Process? serverProcess = null;
+
+        try
+        {
+            var result = await Emitter.EmitAsync(RepresentativeServerFixture.Create(), DefaultOptions);
+            WriteEmittedFiles(outputDirectory, result.Files);
+
+            var bundledModuleDir = Path.Combine(outputDirectory, "src", "modules", moduleName);
+            Directory.CreateDirectory(bundledModuleDir);
+            foreach (var sourceFile in Directory.GetFiles(moduleDir))
+            {
+                File.Copy(sourceFile, Path.Combine(bundledModuleDir, Path.GetFileName(sourceFile)), overwrite: true);
+            }
+
+            var install = await RunProcess(
+                outputDirectory,
+                OperatingSystem.IsWindows() ? "npm.cmd" : "npm",
+                "install",
+                "--ignore-scripts",
+                "--no-fund",
+                "--no-audit",
+                "--package-lock=false");
+            Assert.Equal(0, install.ExitCode);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = OperatingSystem.IsWindows() ? "npx.cmd" : "npx",
+                WorkingDirectory = outputDirectory,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("tsx");
+            startInfo.ArgumentList.Add("src/index.ts");
+
+            serverProcess = Process.Start(startInfo);
+            Assert.NotNull(serverProcess);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+            await SendMcpMessageAsync(serverProcess.StandardInput, new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "initialize",
+                @params = new
+                {
+                    protocolVersion = "2024-11-05",
+                    capabilities = new { },
+                    clientInfo = new { name = "test", version = "1.0.0" },
+                },
+            }, cts.Token);
+
+            var initResponse = await ReadMcpMessageAsync(serverProcess.StandardOutput, cts.Token);
+            Assert.NotNull(initResponse);
+            Assert.Equal(1, initResponse.Value.GetProperty("id").GetInt32());
+
+            await SendMcpMessageAsync(serverProcess.StandardInput, new
+            {
+                jsonrpc = "2.0",
+                method = "notifications/initialized",
+            }, cts.Token);
+
+            await SendMcpMessageAsync(serverProcess.StandardInput, new
+            {
+                jsonrpc = "2.0",
+                id = 2,
+                method = "tools/list",
+            }, cts.Token);
+
+            var listResponse = await ReadMcpMessageAsync(serverProcess.StandardOutput, cts.Token);
+            Assert.NotNull(listResponse);
+            Assert.Equal(2, listResponse.Value.GetProperty("id").GetInt32());
+
+            await SendMcpMessageAsync(serverProcess.StandardInput, new
+            {
+                jsonrpc = "2.0",
+                id = 3,
+                method = "tools/call",
+                @params = new
+                {
+                    name = "get_demo_item",
+                    arguments = new { Name = "hello" },
+                },
+            }, cts.Token);
+
+            var callResponse = await ReadMcpMessageAsync(serverProcess.StandardOutput, cts.Token);
+            Assert.NotNull(callResponse);
+            Assert.Equal(3, callResponse.Value.GetProperty("id").GetInt32());
+
+            var responseJson = callResponse.Value.GetRawText();
+
+            Assert.False(
+                callResponse.Value.TryGetProperty("error", out _),
+                $"Server returned error: {responseJson}");
+
+            var resultElement = callResponse.Value.GetProperty("result");
+
+            var isErrorPresent = resultElement.TryGetProperty("isError", out var isErrorElement);
+            Assert.False(isErrorPresent && isErrorElement.GetBoolean(), $"Server returned error: {responseJson}");
+
+            var contentText = resultElement.GetProperty("content")[0].GetProperty("text").GetString()!;
+            Assert.Contains("\"Name\":\"hello\"", contentText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (serverProcess is { HasExited: false })
+            {
+                serverProcess.Kill(entireProcessTree: true);
+            }
+
+            serverProcess?.Dispose();
+
+            await Task.Delay(500, CancellationToken.None);
+
+            TryDeleteDirectory(outputDirectory);
+            TryDeleteDirectory(moduleDir);
         }
     }
 
@@ -788,12 +974,15 @@ public sealed class TypeScriptEmitterTests
     private static async Task<EmitResult> EmitRepresentativeAsync() =>
         await Emitter.EmitAsync(RepresentativeServerFixture.Create(), DefaultOptions);
 
-    private static ToolDefinition CreateTool(SchemaDefinition schema, ExecutionDefinition? execution = null) =>
+    private static ToolDefinition CreateTool(
+        SchemaDefinition schema,
+        ExecutionDefinition? execution = null,
+        ImmutableArray<ParameterDefinition>? parameters = null) =>
         new(
             ToolName: "test_tool",
             SourceCommand: "Get-Test",
             Description: "Test tool.",
-            Parameters: ImmutableArray<ParameterDefinition>.Empty,
+            Parameters: parameters ?? ImmutableArray<ParameterDefinition>.Empty,
             RequiredParameterSet: null,
             Schema: schema,
             Execution: execution ?? new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth, ExecutionDefinition.DefaultTimeoutMs),
@@ -804,12 +993,13 @@ public sealed class TypeScriptEmitterTests
         string name,
         SchemaDefinition schema,
         string? description = null,
-        ExecutionDefinition? execution = null) =>
+        ExecutionDefinition? execution = null,
+        ImmutableArray<ParameterDefinition>? parameters = null) =>
         new(
             ToolName: name,
             SourceCommand: $"Get-{name}",
             Description: description ?? $"Tests {name}.",
-            Parameters: ImmutableArray<ParameterDefinition>.Empty,
+            Parameters: parameters ?? ImmutableArray<ParameterDefinition>.Empty,
             RequiredParameterSet: null,
             Schema: schema,
             Execution: execution ?? new ExecutionDefinition(ExecutionDefinition.DefaultSerializationDepth, ExecutionDefinition.DefaultTimeoutMs),
@@ -828,6 +1018,25 @@ public sealed class TypeScriptEmitterTests
             var path = Path.Combine(outputDirectory, file.RelativePath.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, file.Contents);
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
@@ -895,6 +1104,48 @@ public sealed class TypeScriptEmitterTests
         }
     }
 
+    private static async Task<bool> IsPwshAvailableAsync()
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("--version");
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return false;
+            }
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await process.WaitForExitAsync(cts.Token);
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    private static string ExtractPowerShellScript(string indexTs)
+    {
+        var startMarker = "const invokePowerShellCommandScript = `";
+        var endMarker = "`;";
+        var start = indexTs.IndexOf(startMarker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Start marker '{startMarker}' not found in source.");
+        var scriptStart = start + startMarker.Length;
+        var end = indexTs.IndexOf(endMarker, scriptStart, StringComparison.Ordinal);
+        Assert.True(end >= 0, $"End marker '{endMarker}' not found in source after position {scriptStart}.");
+        return indexTs.Substring(scriptStart, end - scriptStart);
+    }
+
     private static string GetFileContents(EmitResult result, string relativePath) =>
         Assert.Single(result.Files.Where(file => string.Equals(file.RelativePath, relativePath, StringComparison.Ordinal))).Contents;
 
@@ -903,23 +1154,50 @@ public sealed class TypeScriptEmitterTests
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Missing embedded resource '{resourceName}'.");
         using var reader = new StreamReader(stream);
-        return reader.ReadToEnd().Replace("\r\n", "\n", StringComparison.Ordinal);
+        var text = reader.ReadToEnd().Replace("\r\n", "\n", StringComparison.Ordinal);
+        return StripSnapshotHeader(text);
     }
 
     private static async Task AssertSnapshotAsync(string snapshotRelativePath, string actual)
     {
         var resourceName = $"Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.{snapshotRelativePath.Replace('/', '.')}";
-        var expected = ReadEmbeddedText(resourceName);
-        Assert.Equal(expected, actual);
+        var expected = ReadEmbeddedText(resourceName).TrimEnd('\n');
+        Assert.Equal(expected, actual.TrimEnd('\n'));
+    }
+
+    private static string StripSnapshotHeader(string text)
+    {
+        const string snapshotHeader = "// Snapshot artifact: auto-generated test fixture. Not runtime source.";
+        return text.StartsWith(snapshotHeader + "\n", StringComparison.Ordinal)
+            ? text[(snapshotHeader.Length + 1)..]
+            : text;
     }
 
     private static string ExtractSection(string source, string startMarker, string endMarker)
     {
         var start = source.IndexOf(startMarker, StringComparison.Ordinal);
         Assert.True(start >= 0, $"Start marker '{startMarker}' not found in source.");
+        var normalizedStart = source.LastIndexOf('\n', start);
+        start = normalizedStart < 0 ? start : normalizedStart + 1;
         var end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
         Assert.True(end >= 0, $"End marker '{endMarker}' not found in source after position {start}.");
-        return source.Substring(start, end - start + endMarker.Length);
+        var section = source.Substring(start, end - start + endMarker.Length);
+        var lines = section.Split('\n');
+        var minIndent = lines
+            .Where(static line => line.Length > 0)
+            .Select(static line => line.TakeWhile(static ch => ch is ' ' or '\t').Count())
+            .DefaultIfEmpty(0)
+            .Min();
+
+        for (var index = 0; index < lines.Length; index++)
+        {
+            if (lines[index].Length >= minIndent)
+            {
+                lines[index] = lines[index][minIndent..];
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 
     private static async Task<string> GenerateSchemaDeclarationAsync(SchemaDefinition schema, string? toolName = null)
@@ -928,37 +1206,53 @@ public sealed class TypeScriptEmitterTests
         var server = CreateServer(tool);
         var result = await Emitter.EmitAsync(server, DefaultOptions);
         var contents = GetFileContents(result, "src/index.ts");
-        var schemaIdentifier = $"const {GetSchemaIdentifierBase(toolName ?? tool.ToolName)}InputSchema";
+        var schemaIdentifier = $"const {TypeScriptEmitter.GetSchemaIdentifierBase(toolName ?? tool.ToolName)}";
         return ExtractSection(contents, $"{schemaIdentifier} = ", ";\n");
     }
 
-    private static string GetSchemaIdentifierBase(string toolName)
+    private static (string ModuleDirectory, string ModuleName) CreateTempPowerShellModule()
     {
-        var segments = toolName.Split(['-', '_', '.', ' '], StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0)
+        var moduleDir = Path.Combine(Path.GetTempPath(), "ps2mcp-test", $"module-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(moduleDir);
+
+        var manifest = @"@{
+    RootModule = 'Demo.Module.psm1'
+    ModuleVersion = '1.0.0'
+    FunctionsToExport = @('Get-DemoItem')
+}
+";
+        File.WriteAllText(Path.Combine(moduleDir, "Demo.Module.psd1"), manifest);
+
+        var module = @"function Get-DemoItem {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name
+    )
+    return @{ Name = $Name; Timestamp = (Get-Date).ToString('o') }
+}
+";
+        File.WriteAllText(Path.Combine(moduleDir, "Demo.Module.psm1"), module);
+
+        return (moduleDir, "Demo.Module");
+    }
+
+    private static async Task SendMcpMessageAsync(StreamWriter writer, object message, CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(message);
+        await writer.WriteAsync(json.AsMemory(), cancellationToken);
+        await writer.WriteAsync('\n');
+        await writer.FlushAsync(cancellationToken);
+    }
+
+    private static async Task<JsonElement?> ReadMcpMessageAsync(StreamReader reader, CancellationToken cancellationToken)
+    {
+        var line = await reader.ReadLineAsync(cancellationToken);
+        if (string.IsNullOrEmpty(line))
         {
-            return "tool";
+            return null;
         }
 
-        var builder = new StringBuilder();
-        for (var index = 0; index < segments.Length; index++)
-        {
-            var segment = segments[index];
-            var normalized = char.ToUpperInvariant(segment[0]) + segment[1..].ToLower(System.Globalization.CultureInfo.InvariantCulture);
-            if (index == 0)
-            {
-                normalized = char.ToLowerInvariant(normalized[0]) + normalized[1..];
-            }
-
-            builder.Append(normalized);
-        }
-
-        if (!char.IsLetter(builder[0]) && builder[0] != '_')
-        {
-            builder.Insert(0, "tool");
-        }
-
-        return builder.ToString();
+        return JsonSerializer.Deserialize<JsonElement>(line);
     }
 
 }

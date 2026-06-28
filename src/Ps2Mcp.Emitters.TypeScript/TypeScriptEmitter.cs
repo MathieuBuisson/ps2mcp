@@ -37,34 +37,123 @@ public sealed class TypeScriptEmitter : IServerEmitter
         $ErrorActionPreference = 'Stop'
         $modulePath = $env:PS2MCP_MODULE_PATH
         $profilePath = $env:PS2MCP_PROFILE_PATH
+        $secureParameterNamesJson = $env:PS2MCP_SECURE_PARAMETER_NAMES
         $sourceCommand = $env:PS2MCP_SOURCE_COMMAND
         $serializationDepth = [int]$env:PS2MCP_SERIALIZATION_DEPTH
-        $argumentsJson = [Console]::In.ReadToEnd()
-        $arguments = if ([string]::IsNullOrWhiteSpace($argumentsJson)) { @{} } else { ConvertFrom-Json -InputObject $argumentsJson -AsHashtable }
-        if (-not [string]::IsNullOrWhiteSpace($profilePath)) {
-            if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
-                throw "Bootstrap profile file not found: $profilePath"
+        function Write-StructuredError {
+            param(
+                [string]$category,
+                [string]$message,
+                [string]$details
+            )
+
+            $payload = [ordered]@{
+                category = $category
+                message = $message
+                sourceCommand = $sourceCommand
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($details)) {
+                $payload.details = $details
+            }
+
+            [Console]::Error.WriteLine(($payload | ConvertTo-Json -Compress))
+            exit 1
+        }
+
+        function Convert-SecureParameterValue {
+            param(
+                [string]$parameterName,
+                $secureValue
+            )
+
+            if ($null -eq $secureValue) {
+                return $null
+            }
+
+            if ($secureValue -is [string]) {
+                return ConvertTo-SecureString -String $secureValue -AsPlainText -Force
+            }
+
+            if ($secureValue -is [System.Collections.IEnumerable] -and $secureValue -isnot [string]) {
+                return @($secureValue | ForEach-Object {
+                    if ($_ -isnot [string]) {
+                        throw "Secure parameter '$parameterName' must be a string or array of strings."
+                    }
+
+                    ConvertTo-SecureString -String $_ -AsPlainText -Force
+                })
+            }
+
+            throw "Secure parameter '$parameterName' must be a string or array of strings."
+        }
+
+        try {
+            try {
+                $argumentsJson = [Console]::In.ReadToEnd()
+                $arguments = if ([string]::IsNullOrWhiteSpace($argumentsJson)) { @{} } else { ConvertFrom-Json -InputObject $argumentsJson -AsHashtable }
+                if ($arguments -isnot [System.Collections.IDictionary]) {
+                    throw "Tool arguments must deserialize to an object."
+                }
+
+                $secureParameterNames = if ([string]::IsNullOrWhiteSpace($secureParameterNamesJson)) { @() } else { @(ConvertFrom-Json -InputObject $secureParameterNamesJson) }
+            }
+            catch {
+                Write-StructuredError 'invalid input' 'Failed to parse tool arguments.' $_.Exception.Message
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($profilePath)) {
+                if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+                    Write-StructuredError 'bootstrap profile failure' "Bootstrap profile file not found: $profilePath" $null
+                }
+
+                try {
+                    . $profilePath
+                }
+                catch {
+                    Write-StructuredError 'bootstrap profile failure' 'Bootstrap profile failed.' $_.Exception.Message
+                }
             }
 
             try {
-                . $profilePath
+                Import-Module -Force $modulePath
             }
             catch {
-                throw "Bootstrap profile failed: $($_.Exception.Message)"
+                Write-StructuredError 'module load failure' 'Failed to import bundled module.' $_.Exception.Message
+            }
+
+            try {
+                foreach ($secureParameterName in $secureParameterNames) {
+                    if ($arguments.Contains($secureParameterName)) {
+                        $arguments[$secureParameterName] = Convert-SecureParameterValue -parameterName $secureParameterName -secureValue $arguments[$secureParameterName]
+                    }
+                }
+            }
+            catch {
+                Write-StructuredError 'invalid input' 'Failed to bind secure parameter values.' $_.Exception.Message
+            }
+
+            try {
+                $result = & $sourceCommand @arguments
+            }
+            catch {
+                Write-StructuredError 'command execution failure' 'PowerShell command failed.' $_.Exception.Message
+            }
+
+            try {
+                $result | ConvertTo-Json -Depth $serializationDepth -Compress
+            }
+            catch {
+                Write-StructuredError 'serialization failure' 'Failed to serialize PowerShell output.' $_.Exception.Message
             }
         }
-        Import-Module -Force $modulePath
-        $result = & $sourceCommand @arguments
-        $result | ConvertTo-Json -Depth $serializationDepth -Compress
+        catch {
+            Write-StructuredError 'runtime internal error' 'Unexpected runtime failure.' $_.Exception.Message
+        }
         """;
 
-    private static readonly string[] PowerShellScriptStatements = PowerShellScript
-        .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-        .Select(static s => s.Trim())
-        .ToArray();
-
     /// <inheritdoc />
-    public Task<EmitResult> EmitAsync(
+    public async Task<EmitResult> EmitAsync(
         McpServerDefinition server,
         EmitOptions options,
         CancellationToken cancellationToken = default)
@@ -76,12 +165,14 @@ public sealed class TypeScriptEmitter : IServerEmitter
 
         var packageJsonFile = new EmittedFile(PackageJsonFilePath, RenderPackageJson(server));
         var tsConfigFile = new EmittedFile(TsConfigFilePath, RenderTsConfigJson());
-        var indexFile = new EmittedFile(IndexFilePath, RenderIndex(server, options, cancellationToken));
+        var indexFile = new EmittedFile(
+            IndexFilePath,
+            await RenderIndexAsync(server, options, cancellationToken).ConfigureAwait(false));
         packageJsonFile.Validate();
         tsConfigFile.Validate();
         indexFile.Validate();
 
-        return Task.FromResult(new EmitResult(ImmutableArray.Create(packageJsonFile, tsConfigFile, indexFile)));
+        return new EmitResult(ImmutableArray.Create(packageJsonFile, tsConfigFile, indexFile));
     }
 
     private static string RenderPackageJson(McpServerDefinition server) => WriteJson(json =>
@@ -151,7 +242,10 @@ public sealed class TypeScriptEmitter : IServerEmitter
         json.WriteEndObject();
     });
 
-    private static string RenderIndex(McpServerDefinition server, EmitOptions options, CancellationToken cancellationToken)
+    private static async Task<string> RenderIndexAsync(
+        McpServerDefinition server,
+        EmitOptions options,
+        CancellationToken cancellationToken)
     {
         var builder = new StringBuilder();
         var schemaIdentifiers = CreateSchemaIdentifiers(server.Tools);
@@ -160,7 +254,8 @@ public sealed class TypeScriptEmitter : IServerEmitter
         RenderImports(builder);
         RenderConstants(builder, options);
         RenderRuntimeOptions(builder);
-        RenderSchemaDeclarations(builder, server.Tools, schemaIdentifiers, cancellationToken);
+        RenderPowerShellErrorHelpers(builder);
+        await RenderSchemaDeclarationsAsync(builder, server.Tools, schemaIdentifiers, cancellationToken).ConfigureAwait(false);
         RenderServerDeclaration(builder, server.Module.Name, resolvedVersion);
         RenderToolRegistrations(builder, server.Tools, schemaIdentifiers, cancellationToken);
         RenderInvokePowerShellTool(builder);
@@ -186,16 +281,9 @@ public sealed class TypeScriptEmitter : IServerEmitter
         builder.Append("const bundledModuleImportPath = resolve(runtimeDirectory, ")
             .Append(QuoteTypeScriptString(options.BundledModuleImportPath))
             .AppendLine(");");
-        builder.AppendLine("const invokePowerShellCommandScript = [");
-
-        for (var i = 0; i < PowerShellScriptStatements.Length; i++)
-        {
-            builder.Append("  ");
-            builder.Append(QuoteTypeScriptString(PowerShellScriptStatements[i]));
-            builder.AppendLine(",");
-        }
-
-        builder.AppendLine("].join(\"; \");");
+        builder.AppendLine("const invokePowerShellCommandScript = `");
+        builder.AppendLine(PowerShellScript);
+        builder.AppendLine("`;");
         builder.AppendLine();
     }
 
@@ -238,7 +326,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
         builder.AppendLine();
     }
 
-    private static void RenderSchemaDeclarations(
+    private static async Task RenderSchemaDeclarationsAsync(
         StringBuilder builder,
         ImmutableArray<ToolDefinition> tools,
         IReadOnlyDictionary<string, string> schemaIdentifiers,
@@ -251,7 +339,11 @@ public sealed class TypeScriptEmitter : IServerEmitter
             builder.Append("const ")
                 .Append(schemaIdentifiers[tool.ToolName])
                 .Append(" = ")
-                .Append(RenderSchemaDefinition(tool.Schema, 0))
+                .Append(await RenderSchemaDefinitionAsync(
+                    tool.Schema,
+                    0,
+                    CreateParameterLookup(tool.Parameters),
+                    cancellationToken).ConfigureAwait(false))
                 .AppendLine(";");
             builder.AppendLine();
         }
@@ -295,6 +387,8 @@ public sealed class TypeScriptEmitter : IServerEmitter
             builder.Append("  async (args) => invokePowerShellTool(")
                 .Append(QuoteTypeScriptString(tool.SourceCommand))
                 .Append(", args, ")
+                .Append(RenderTypeScriptStringArray(GetSecureStringParameterNames(tool.Parameters)))
+                .Append(", ")
                 .Append(tool.Execution.SerializationDepth.ToString(CultureInfo.InvariantCulture))
                 .Append(", ")
                 .Append(tool.Execution.TimeoutMs.ToString(CultureInfo.InvariantCulture))
@@ -307,90 +401,202 @@ public sealed class TypeScriptEmitter : IServerEmitter
 
     private static void RenderInvokePowerShellTool(StringBuilder builder)
     {
-        builder.Append("""
-            async function invokePowerShellTool(
-              sourceCommand: string,
-              args: unknown,
-              serializationDepth: number,
-              timeoutMs: number,
-              profilePath: string | undefined,
-            ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
-              const argsJson = args === undefined ? "{}" : JSON.stringify(args);
-              const child = spawn(
-                "pwsh",
-                [
-                  "-NoProfile",
-                  "-NonInteractive",
-                  "-Command",
-                  invokePowerShellCommandScript,
-                ],
-                {
-                  env: {
-                    ...process.env,
-                    PS2MCP_MODULE_PATH: bundledModuleImportPath,
-                    PS2MCP_PROFILE_PATH: profilePath ?? "",
-                    PS2MCP_SERIALIZATION_DEPTH: serializationDepth.toString(10),
-                    PS2MCP_SOURCE_COMMAND: sourceCommand,
-                  },
-                  stdio: ["pipe", "pipe", "pipe"],
-                },
-              );
+        builder.Append(StripMargin("""
+                        |async function invokePowerShellTool(
+                        |  sourceCommand: string,
+                        |  args: unknown,
+                        |  secureParameterNames: string[],
+                        |  serializationDepth: number,
+                        |  timeoutMs: number,
+                        |  profilePath: string | undefined,
+                        |): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+                        |  let argsJson: string;
+                        |  try {
+                        |    argsJson = args === undefined ? "{}" : JSON.stringify(args);
+                        |  }
+                        |  catch (error) {
+                        |    const errorPayload = createRuntimeInternalError(
+                        |      sourceCommand,
+                        |      `PowerShell invocation for ${sourceCommand} failed before a structured error payload was produced.`,
+                        |      error instanceof Error ? error.message : String(error),
+                        |    );
+                        |    return {
+                        |      isError: true,
+                        |      content: [{ type: "text", text: JSON.stringify(errorPayload) }],
+                        |    };
+                        |  }
+                        |
+                        |  const child = spawn(
+                        |    "pwsh",
+                        |    [
+                        |      "-NoProfile",
+                        |      "-NonInteractive",
+                        |      "-Command",
+                        |      invokePowerShellCommandScript,
+                        |    ],
+                        |    {
+                        |      env: {
+                        |        ...process.env,
+                        |        PS2MCP_MODULE_PATH: bundledModuleImportPath,
+                        |        PS2MCP_PROFILE_PATH: profilePath ?? "",
+                        |        PS2MCP_SECURE_PARAMETER_NAMES: JSON.stringify(secureParameterNames),
+                        |        PS2MCP_SERIALIZATION_DEPTH: serializationDepth.toString(10),
+                        |        PS2MCP_SOURCE_COMMAND: sourceCommand,
+                        |      },
+                        |      stdio: ["pipe", "pipe", "pipe"],
+                        |    },
+                        |  );
+                        |
+                        |  child.stdout.setEncoding("utf8");
+                        |  child.stderr.setEncoding("utf8");
+                        |
+                        |  const stdoutChunks: string[] = [];
+                        |  const stderrChunks: string[] = [];
+                        |  child.stdout.on("data", (chunk: string) => stdoutChunks.push(chunk));
+                        |  child.stderr.on("data", (chunk: string) => stderrChunks.push(chunk));
+                        |
+                        |  try {
+                        |    const exitCode = await new Promise<number | null>((resolveClose, reject) => {
+                        |      const onError = (err: Error) => {
+                        |        cleanup();
+                        |        reject(err);
+                        |      };
+                        |      const onClose = (code: number | null) => {
+                        |        cleanup();
+                        |        resolveClose(code);
+                        |      };
+                        |      const timer = setTimeout(() => {
+                        |        cleanup();
+                        |        child.kill();
+                        |        reject(new Error(
+                        |          `PowerShell invocation for ${sourceCommand} exceeded timeout of ${timeoutMs}ms and was terminated.`,
+                        |        ));
+                        |      }, timeoutMs);
+                        |      const cleanup = () => {
+                        |        clearTimeout(timer);
+                        |        child.stdin.off("error", onError);
+                        |        child.off("error", onError);
+                        |        child.off("close", onClose);
+                        |      };
+                        |      child.stdin.on("error", onError);
+                        |      child.stdin.end(argsJson, "utf8");
+                        |      child.once("error", onError);
+                        |      child.once("close", onClose);
+                        |    });
+                        |
+                        |    const stderr = stderrChunks.join("").trim();
+                        |    if ((exitCode ?? 1) !== 0) {
+                        |      const errorPayload = parsePowerShellError(stderr, sourceCommand);
+                        |      return {
+                        |        isError: true,
+                        |        content: [{ type: "text", text: JSON.stringify(errorPayload) }],
+                        |      };
+                        |    }
+                        |
+                        |    const stdout = stdoutChunks.join("").trim();
+                        |    const content: Array<{ type: "text"; text: string }> = [
+                        |      { type: "text", text: stdout.length === 0 ? "null" : stdout },
+                        |    ];
+                        |    if (stderr.length > 0) {
+                        |      content.push({ type: "text", text: stderr });
+                        |    }
+                        |
+                        |    return { content };
+                        |  }
+                        |  catch (error) {
+                        |    const errorPayload = createRuntimeInternalError(
+                        |      sourceCommand,
+                        |      `PowerShell invocation for ${sourceCommand} failed before a structured error payload was produced.`,
+                        |      error instanceof Error ? error.message : String(error),
+                        |    );
+                        |    return {
+                        |      isError: true,
+                        |      content: [{ type: "text", text: JSON.stringify(errorPayload) }],
+                        |    };
+                        |  }
+                        |}
+                        |
+                        """));
+        builder.AppendLine();
+    }
 
-              child.stdout.setEncoding("utf8");
-              child.stderr.setEncoding("utf8");
-
-              const stdoutChunks: string[] = [];
-              const stderrChunks: string[] = [];
-              child.stdout.on("data", (chunk: string) => stdoutChunks.push(chunk));
-              child.stderr.on("data", (chunk: string) => stderrChunks.push(chunk));
-
-              const exitCode = await new Promise<number | null>((resolveClose, reject) => {
-                const onError = (err: Error) => {
-                  cleanup();
-                  reject(err);
-                };
-                const onClose = (code: number | null) => {
-                  cleanup();
-                  resolveClose(code);
-                };
-                const timer = setTimeout(() => {
-                  cleanup();
-                  child.kill();
-                  reject(new Error(
-                    `PowerShell invocation for ${sourceCommand} exceeded timeout of ${timeoutMs}ms and was terminated.`,
-                  ));
-                }, timeoutMs);
-                const cleanup = () => {
-                  clearTimeout(timer);
-                  child.stdin.off("error", onError);
-                  child.off("error", onError);
-                  child.off("close", onClose);
-                };
-                child.stdin.on("error", onError);
-                child.stdin.end(argsJson, "utf8");
-                child.once("error", onError);
-                child.once("close", onClose);
-              });
-
-              if ((exitCode ?? 1) !== 0) {
-                const stderr = stderrChunks.join("").trim();
-                throw new Error(
-                  `PowerShell invocation for ${sourceCommand} failed with exit code ${exitCode ?? "null"}: ${stderr}`,
-                );
-              }
-
-              const stdout = stdoutChunks.join("").trim();
-              const stderr = stderrChunks.join("").trim();
-              const content: Array<{ type: "text"; text: string }> = [
-                { type: "text", text: stdout.length === 0 ? "null" : stdout },
-              ];
-              if (stderr.length > 0) {
-                content.push({ type: "text", text: stderr });
-              }
-              return { content };
-            }
-
-            """);
+    private static void RenderPowerShellErrorHelpers(StringBuilder builder)
+    {
+        builder.Append(StripMargin("""
+                        |type PowerShellErrorCategory =
+                        |  | "invalid input"
+                        |  | "module load failure"
+                        |  | "bootstrap profile failure"
+                        |  | "command execution failure"
+                        |  | "serialization failure"
+                        |  | "runtime internal error";
+                        |
+                        |type PowerShellErrorPayload = {
+                        |  category: PowerShellErrorCategory;
+                        |  message: string;
+                        |  sourceCommand: string;
+                        |  details?: string;
+                        |};
+                        |
+                        |function createRuntimeInternalError(
+                        |  sourceCommand: string,
+                        |  message: string,
+                        |  details?: string,
+                        |): PowerShellErrorPayload {
+                        |  if (details !== undefined && details.length > 0) {
+                        |    return { category: "runtime internal error", message, sourceCommand, details };
+                        |  }
+                        |
+                        |  return { category: "runtime internal error", message, sourceCommand };
+                        |}
+                        |
+                        |function isPowerShellErrorCategory(value: string): value is PowerShellErrorCategory {
+                        |  return value === "invalid input"
+                        |    || value === "module load failure"
+                        |    || value === "bootstrap profile failure"
+                        |    || value === "command execution failure"
+                        |    || value === "serialization failure"
+                        |    || value === "runtime internal error";
+                        |}
+                        |
+                        |function isPowerShellErrorPayload(value: unknown): value is PowerShellErrorPayload {
+                        |  if (typeof value !== "object" || value === null) {
+                        |    return false;
+                        |  }
+                        |
+                        |  const candidate = value as Record<string, unknown>;
+                        |  return typeof candidate.category === "string"
+                        |    && isPowerShellErrorCategory(candidate.category)
+                        |    && typeof candidate.message === "string"
+                        |    && typeof candidate.sourceCommand === "string"
+                        |    && (candidate.details === undefined || typeof candidate.details === "string");
+                        |}
+                        |
+                        |function parsePowerShellError(stderr: string, sourceCommand: string): PowerShellErrorPayload {
+                        |  if (stderr.length === 0) {
+                        |    return createRuntimeInternalError(
+                        |      sourceCommand,
+                        |      `PowerShell invocation for ${sourceCommand} failed without error output.`,
+                        |    );
+                        |  }
+                        |
+                        |  try {
+                        |    const parsed = JSON.parse(stderr) as unknown;
+                        |    if (isPowerShellErrorPayload(parsed)) {
+                        |      return parsed;
+                        |    }
+                        |  }
+                        |  catch {
+                        |  }
+                        |
+                        |  return createRuntimeInternalError(
+                        |    sourceCommand,
+                        |    `PowerShell invocation for ${sourceCommand} failed without a structured error payload.`,
+                        |    stderr,
+                        |  );
+                        |}
+                        |
+                        """));
         builder.AppendLine();
     }
 
@@ -410,34 +616,64 @@ public sealed class TypeScriptEmitter : IServerEmitter
         builder.AppendLine();
     }
 
-    private static void AppendObjectShape(StringBuilder builder, SchemaDefinition schema, int indentLevel)
+    private static async Task AppendObjectShapeAsync(
+        StringBuilder builder,
+        SchemaDefinition schema,
+        int indentLevel,
+        IReadOnlyDictionary<string, ParameterDefinition>? parameterLookup,
+        CancellationToken cancellationToken)
     {
         var required = new HashSet<string>(schema.Required, StringComparer.Ordinal);
 
         foreach (var property in schema.Properties)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             builder.Append(new string(' ', indentLevel * IndentSize))
                 .Append(property.Name)
                 .Append(": ")
-                .Append(RenderProperty(property, required.Contains(property.Name), indentLevel))
+                .Append(await RenderPropertyAsync(
+                    property,
+                    required.Contains(property.Name),
+                    indentLevel,
+                    parameterLookup is not null && parameterLookup.TryGetValue(property.Name, out var parameter) ? parameter : null,
+                    cancellationToken).ConfigureAwait(false))
                 .AppendLine(",");
         }
     }
 
-    private static string RenderProperty(SchemaProperty property, bool isRequired, int indentLevel)
+    private static async Task<string> RenderPropertyAsync(
+        SchemaProperty property,
+        bool isRequired,
+        int indentLevel,
+        ParameterDefinition? parameter,
+        CancellationToken cancellationToken)
     {
-        var expression = RenderSchemaDefinition(CreatePropertySchemaDefinition(property), indentLevel);
-        expression = ApplyPropertyConstraints(expression, property);
+        var expression = await RenderSchemaDefinitionAsync(
+            CreatePropertySchemaDefinition(property),
+            indentLevel,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        expression = await ApplyPropertyConstraintsAsync(expression, property, cancellationToken).ConfigureAwait(false);
+
+        var description = CreateParameterDescription(parameter);
+        if (description is not null)
+        {
+            expression += $".describe({QuoteTypeScriptString(description)})";
+        }
+
         return isRequired ? expression : expression + ".optional()";
     }
 
-    private static string ApplyPropertyConstraints(string baseExpression, SchemaProperty property) => property.Type switch
-    {
-        "string" => ApplyStringConstraints(baseExpression, property.Enum, property.Pattern),
-        "integer" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum),
-        "number" => ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum),
-        _ => baseExpression,
-    };
+    private static Task<string> ApplyPropertyConstraintsAsync(
+        string baseExpression,
+        SchemaProperty property,
+        CancellationToken cancellationToken) => property.Type switch
+        {
+            "string" => ApplyStringConstraintsAsync(baseExpression, property.Enum, property.Pattern, cancellationToken),
+            "integer" => Task.FromResult(ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum)),
+            "number" => Task.FromResult(ApplyNumericConstraints(baseExpression, property.Minimum, property.Maximum, property.Enum)),
+            _ => Task.FromResult(baseExpression),
+        };
 
     private static string ApplyNumericConstraints(string baseExpression, string? minimum, string? maximum, ImmutableArray<string>? enumValues)
     {
@@ -462,7 +698,11 @@ public sealed class TypeScriptEmitter : IServerEmitter
             ? value
             : QuoteTypeScriptString(value);
 
-    private static string ApplyStringConstraints(string baseExpression, ImmutableArray<string>? enumValues, string? pattern)
+    private static async Task<string> ApplyStringConstraintsAsync(
+        string baseExpression,
+        ImmutableArray<string>? enumValues,
+        string? pattern,
+        CancellationToken cancellationToken)
     {
         var hasEnum = enumValues is { Length: > 0 };
         var enumEntries = enumValues.GetValueOrDefault();
@@ -475,7 +715,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
             return expression;
         }
 
-        ValidateRegexPattern(pattern);
+        await ValidateRegexPatternAsync(pattern, cancellationToken).ConfigureAwait(false);
 
         if (!hasEnum)
         {
@@ -487,7 +727,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
             + $"{{ message: {QuoteTypeScriptString($"Expected value matching pattern {pattern}.")} }})";
     }
 
-    private static void ValidateRegexPattern(string pattern)
+    private static async Task ValidateRegexPatternAsync(string pattern, CancellationToken cancellationToken)
     {
         try
         {
@@ -498,12 +738,14 @@ public sealed class TypeScriptEmitter : IServerEmitter
             throw new InvalidOperationException($"Invalid regular expression pattern '{pattern}': {ex.Message}", ex);
         }
 
-        ValidateRegexSafety(pattern);
+        await ValidateRegexSafetyAsync(pattern, cancellationToken).ConfigureAwait(false);
     }
 
-    private static void ValidateRegexSafety(string pattern)
+    private static async Task ValidateRegexSafetyAsync(string pattern, CancellationToken cancellationToken)
     {
         var regex = new Regex(pattern, RegexOptions.ECMAScript | RegexOptions.Compiled);
+        var timeout = TimeSpan.FromMilliseconds(100);
+        var rejectionMessage = $"Regex pattern '{pattern}' is potentially vulnerable to catastrophic backtracking and was rejected.";
         var adversarialInputs = new[]
         {
             new string('a', 25),
@@ -514,20 +756,24 @@ public sealed class TypeScriptEmitter : IServerEmitter
 
         foreach (var input in adversarialInputs)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             try
             {
                 var task = Task.Run(() => regex.IsMatch(input), cts.Token);
-                if (!task.Wait(TimeSpan.FromMilliseconds(100)))
+                var completedTask = await Task.WhenAny(task, Task.Delay(timeout, cts.Token)).ConfigureAwait(false);
+                if (completedTask != task)
                 {
-                    throw new InvalidOperationException(
-                        $"Regex pattern '{pattern}' is potentially vulnerable to catastrophic backtracking and was rejected.");
+                    cts.Cancel();
+                    throw new InvalidOperationException(rejectionMessage);
                 }
+
+                _ = await task.ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new InvalidOperationException(
-                    $"Regex pattern '{pattern}' is potentially vulnerable to catastrophic backtracking and was rejected.");
+                throw new InvalidOperationException(rejectionMessage);
             }
         }
     }
@@ -564,7 +810,10 @@ public sealed class TypeScriptEmitter : IServerEmitter
     /// Renders an array item schema from either the normalized <c>Items</c> payload or a direct item schema.
     /// The direct-item form is retained to tolerate older IR shapes while property schemas are normalized locally.
     /// </summary>
-    private static string RenderArrayElementSchema(SchemaDefinition? schema, int indentLevel)
+    private static async Task<string> RenderArrayElementSchemaAsync(
+        SchemaDefinition? schema,
+        int indentLevel,
+        CancellationToken cancellationToken)
     {
         if (schema is null)
         {
@@ -573,10 +822,12 @@ public sealed class TypeScriptEmitter : IServerEmitter
 
         if (string.Equals(schema.Type, "array", StringComparison.Ordinal))
         {
-            return schema.Items is null ? "z.unknown()" : RenderSchemaDefinition(schema.Items, indentLevel);
+            return schema.Items is null
+                ? "z.unknown()"
+                : await RenderSchemaDefinitionAsync(schema.Items, indentLevel, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        return RenderSchemaDefinition(schema, indentLevel);
+        return await RenderSchemaDefinitionAsync(schema, indentLevel, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private static IReadOnlyDictionary<string, string> CreateSchemaIdentifiers(ImmutableArray<ToolDefinition> tools)
@@ -603,18 +854,29 @@ public sealed class TypeScriptEmitter : IServerEmitter
         return identifiers;
     }
 
-    private static string RenderSchemaDefinition(SchemaDefinition schema, int indentLevel) => schema.Type switch
+    private static async Task<string> RenderSchemaDefinitionAsync(
+        SchemaDefinition schema,
+        int indentLevel,
+        IReadOnlyDictionary<string, ParameterDefinition>? parameterLookup = null,
+        CancellationToken cancellationToken = default)
     {
-        "string" => "z.string()",
-        "integer" => "z.number().int()",
-        "number" => "z.number()",
-        "boolean" => "z.boolean()",
-        "array" => $"z.array({RenderArrayElementSchema(schema, indentLevel)})",
-        "object" => RenderObjectSchema(schema, indentLevel + 1),
-        _ => "z.unknown()",
-    };
+        return schema.Type switch
+        {
+            "string" => "z.string()",
+            "integer" => "z.number().int()",
+            "number" => "z.number()",
+            "boolean" => "z.boolean()",
+            "array" => $"z.array({await RenderArrayElementSchemaAsync(schema, indentLevel, cancellationToken).ConfigureAwait(false)})",
+            "object" => await RenderObjectSchemaAsync(schema, indentLevel + 1, parameterLookup, cancellationToken).ConfigureAwait(false),
+            _ => "z.unknown()",
+        };
+    }
 
-    private static string RenderObjectSchema(SchemaDefinition? schema, int indentLevel)
+    private static async Task<string> RenderObjectSchemaAsync(
+        SchemaDefinition? schema,
+        int indentLevel,
+        IReadOnlyDictionary<string, ParameterDefinition>? parameterLookup,
+        CancellationToken cancellationToken)
     {
         if (schema is null)
         {
@@ -631,11 +893,64 @@ public sealed class TypeScriptEmitter : IServerEmitter
         var builder = new StringBuilder();
         builder.AppendLine("z.object({");
 
-        AppendObjectShape(builder, schema, indentLevel);
+        await AppendObjectShapeAsync(builder, schema, indentLevel, parameterLookup, cancellationToken).ConfigureAwait(false);
 
         builder.Append(closingIndent).Append("})");
         return builder.ToString();
     }
+
+    private static IReadOnlyDictionary<string, ParameterDefinition> CreateParameterLookup(ImmutableArray<ParameterDefinition> parameters)
+    {
+        var lookup = new Dictionary<string, ParameterDefinition>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+        {
+            lookup[parameter.Name] = parameter;
+        }
+
+        return lookup;
+    }
+
+    private static string? CreateParameterDescription(ParameterDefinition? parameter)
+    {
+        if (parameter is null)
+        {
+            return null;
+        }
+
+        if (parameter.IsSecure)
+        {
+            return string.IsNullOrWhiteSpace(parameter.Description)
+                ? "Treated as a secret."
+                : parameter.Description + " Treated as a secret.";
+        }
+
+        return string.IsNullOrWhiteSpace(parameter.Description) ? null : parameter.Description;
+    }
+
+    private static IEnumerable<string> GetSecureStringParameterNames(ImmutableArray<ParameterDefinition> parameters) =>
+        parameters
+            .Where(static parameter => parameter.IsSecure && IsSecureStringParameterType(parameter.Type))
+            .Select(static parameter => parameter.Name);
+
+    private static bool IsSecureStringParameterType(string parameterType)
+    {
+        var normalized = parameterType.Trim();
+        if (normalized.EndsWith("[]", StringComparison.Ordinal))
+        {
+            normalized = normalized[..^2];
+        }
+
+        const string namespacePrefix = "System.Security.";
+        if (normalized.StartsWith(namespacePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[namespacePrefix.Length..];
+        }
+
+        return string.Equals(normalized, "SecureString", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RenderTypeScriptStringArray(IEnumerable<string> values) =>
+        $"[{string.Join(", ", values.Select(QuoteTypeScriptString))}]";
 
     private static string AppendNumericConstraints(string baseExpression, string? minimum, string? maximum)
     {
@@ -663,7 +978,7 @@ public sealed class TypeScriptEmitter : IServerEmitter
         throw new ArgumentException($"Invalid numeric constraint value: '{value}'.");
     }
 
-    private static string GetSchemaIdentifierBase(string toolName)
+    internal static string GetSchemaIdentifierBase(string toolName)
     {
         var segments = toolName.Split(['-', '_', '.', ' '], StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 0)
@@ -697,6 +1012,23 @@ public sealed class TypeScriptEmitter : IServerEmitter
     {
         var encoded = JsonEncodedText.Encode(value, JavaScriptEncoder.UnsafeRelaxedJsonEscaping);
         return "\"" + encoded.ToString() + "\"";
+    }
+
+    private static string StripMargin(string value)
+    {
+        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var lines = normalized.Split('\n');
+
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var marginIndex = lines[index].IndexOf('|', StringComparison.Ordinal);
+            if (marginIndex >= 0)
+            {
+                lines[index] = lines[index][(marginIndex + 1)..];
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 
     private static string WriteJson(Action<Utf8JsonWriter> write)

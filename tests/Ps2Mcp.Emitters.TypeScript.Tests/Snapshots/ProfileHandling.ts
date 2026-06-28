@@ -1,3 +1,4 @@
+// Snapshot artifact: auto-generated test fixture. Not runtime source.
 type RuntimeOptions = {
   profilePath?: string;
 };

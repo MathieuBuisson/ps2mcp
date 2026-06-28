@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Snapshots/RepresentativeIndex.ts"
+    <EmbeddedResource Include="Snapshots/RepresentativeIndex.snapshot.txt"
                       LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativeIndex.ts" />
     <EmbeddedResource Include="Snapshots/RepresentativePackage.json"
                       LogicalName="Ps2Mcp.Emitters.TypeScript.Tests.Snapshots.RepresentativePackage.json" />

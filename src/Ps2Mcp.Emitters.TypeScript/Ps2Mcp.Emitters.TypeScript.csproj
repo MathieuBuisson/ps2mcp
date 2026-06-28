@@ -9,4 +9,8 @@
     <ProjectReference Include="..\Ps2Mcp.Core\Ps2Mcp.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ps2Mcp.Emitters.TypeScript.Tests" />
+  </ItemGroup>
+
 </Project>
